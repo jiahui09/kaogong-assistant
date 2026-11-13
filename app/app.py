@@ -1232,28 +1232,11 @@ def render_exam_filters() -> None:
             st.rerun()
 
 
-def category_time_stats(questions: list[dict[str, Any]]) -> list[tuple[str, int, float]]:
-    spent = st.session_state.time_spent or {}
-    bucket: dict[str, list[int]] = {}
-    for q in questions:
-        qid = int(q["id"])
-        cat = str(q.get("category") or q.get("module") or "未分类")
-        bucket.setdefault(cat, []).append(int(spent.get(qid) or 0))
-    rows: list[tuple[str, int, float]] = []
-    for cat, vals in bucket.items():
-        n = len(vals)
-        avg = (sum(vals) / n) if n else 0.0
-        rows.append((cat, n, avg))
-    rows.sort(key=lambda x: x[2], reverse=True)
-    return rows
-
-
 def on_answer_change(qid: int) -> None:
-    """radio 回调：立即写入答案并保存草稿，减少二次点击延迟感。"""
+    """radio 回调：立即写入答案并保存草稿。"""
     key = f"radio_{qid}"
     selected = st.session_state.get(key)
     opts = None
-    # 从当前题找选项字母
     for q in st.session_state.get("questions") or []:
         if int(q["id"]) == int(qid):
             opts = q.get("options") or []
@@ -1266,14 +1249,12 @@ def on_answer_change(qid: int) -> None:
         st.session_state.answers.pop(int(qid), None)
     else:
         st.session_state.answers[int(qid)] = keys[choices.index(selected)]
-    # 点击该题区域即开始/切换本题计时
-    touch_question_timer(int(qid))
     persist_draft()
 
 
 @st.fragment(run_every=1)
-def render_top_timer_bar() -> None:
-    """顶部工具栏计时：仅刷新这一小块，不重跑整卷。"""
+def render_sticky_header_timer() -> None:
+    """页眉常驻迷你计时条：固定顶部、占高很小，仅刷新本 fragment。"""
     if not st.session_state.get("questions") or not st.session_state.get("exam_started_at"):
         return
     started = float(st.session_state.exam_started_at)
@@ -1285,15 +1266,28 @@ def render_top_timer_bar() -> None:
     if st.session_state.get("mode") == "exam":
         remain = int(st.session_state.exam_limit_sec or 0) - elapsed
         remain_txt = format_duration(remain) if remain >= 0 else "已超时"
-        title = "套卷计时"
+        mode_txt = "套卷"
     else:
-        remain_txt = "练习中"
-        title = "练习计时"
-    c1, c2, c3, c4 = st.columns([1.2, 1, 1, 1.2])
-    c1.markdown(f"**⏱ {title}**")
-    c2.metric("已用时", format_duration(elapsed))
-    c3.metric("参考剩余", remain_txt)
-    c4.metric("进度", f"{answered}/{total}")
+        remain_txt = "-"
+        mode_txt = "练习"
+    st.markdown(
+        f"""
+<div style="
+  position: fixed; top: 0; left: 0; right: 0; z-index: 10000;
+  height: 34px; display:flex; align-items:center; gap:14px;
+  padding: 0 14px; font-size: 12.5px; letter-spacing: .2px;
+  background: rgba(16,20,30,.92); color: #f3f6ff;
+  border-bottom: 1px solid rgba(255,255,255,.12);
+  backdrop-filter: blur(8px);">
+  <span style="opacity:.8">⏱ {mode_txt}</span>
+  <span><b>已用</b> {format_duration(elapsed)}</span>
+  <span><b>剩余</b> {remain_txt}</span>
+  <span><b>进度</b> {answered}/{total}</span>
+</div>
+<div style="height:38px"></div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 def render_quiz() -> None:
@@ -1319,16 +1313,15 @@ def render_quiz() -> None:
         st.success("已恢复未交卷草稿，可继续作答。")
         st.session_state.draft_restored = False
 
-    meta = st.session_state.quiz_meta or {}
-    # 顶部工具栏计时（整页可见，不再用右下角弹窗）
-    with st.container():
-        render_top_timer_bar()
+    # 页眉常驻计时（固定顶部，占高很小）
+    render_sticky_header_timer()
 
+    meta = st.session_state.quiz_meta or {}
     if st.session_state.mode == "exam":
         st.markdown(
             f"**套卷模拟**：`{meta.get('region')}` {meta.get('year')} · {meta.get('paper')}"
         )
-        st.caption("整卷浏览作答；答案会自动保存。参考时长到点不强制交卷。")
+        st.caption("整卷浏览作答；答案自动保存。参考时长到点不强制交卷。")
     else:
         st.caption(
             f"练习模式：{len(questions)} 道｜"
@@ -1340,7 +1333,6 @@ def render_quiz() -> None:
     st.write(f"已作答 {answered} / {len(questions)}（草稿自动保存）")
 
     starred_ids = load_starred_ids()
-    # 性能：默认折叠配图较多的题干材料；整卷一次渲染但避免额外导航重跑
     for i, q in enumerate(questions, start=1):
         qid = int(q["id"])
         is_star = qid in starred_ids
@@ -1358,11 +1350,6 @@ def render_quiz() -> None:
                     set_question_starred(qid, not is_star)
                     st.rerun()
 
-            # 点击题干区域也切换计时焦点
-            if st.button("开始本题计时", key=f"focus_{qid}", help="从本题开始统计用时"):
-                touch_question_timer(qid)
-                persist_draft()
-
             if q.get("material_html") or q.get("material_text"):
                 with st.expander("材料", expanded=False):
                     render_rich_content(
@@ -1373,7 +1360,6 @@ def render_quiz() -> None:
 
             opts = q.get("options") or []
             choices = [option_label(o) for o in opts]
-            keys = [(o.get("key") or "").upper() for o in opts]
             if not choices:
                 st.warning("该题无选项数据，跳过。")
                 continue
@@ -1384,10 +1370,10 @@ def render_quiz() -> None:
                     with cols[j % len(cols)]:
                         render_option_visual(opt)
 
+            keys = [(o.get("key") or "").upper() for o in opts]
             radio_options = ["(请选择)"] + choices
             current = st.session_state.answers.get(qid)
             default_idx = keys.index(current) + 1 if current in keys else 0
-            # 用 on_change 即时落盘，避免“点了像没选上”
             st.radio(
                 f"选项##{qid}",
                 options=radio_options,
@@ -1397,22 +1383,10 @@ def render_quiz() -> None:
                 on_change=on_answer_change,
                 args=(qid,),
             )
-            spent = int((st.session_state.time_spent or {}).get(qid) or 0)
-            if spent:
-                st.caption(f"本题累计用时 {format_duration(spent)}")
-
-    with st.expander("题型耗时速览", expanded=False):
-        rows = category_time_stats(questions)
-        if not rows:
-            st.caption("点击某题的「开始本题计时」或作答后开始统计。")
-        else:
-            for cat, n, avg in rows:
-                st.write(f"- `{cat}`：{n} 题，平均 {format_duration(int(avg))}")
 
     c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("交卷批分", type="primary", use_container_width=True):
-            # 先把所有 radio 状态同步进 answers（防止个别未触发 on_change）
             for q in questions:
                 qid = int(q["id"])
                 selected = st.session_state.get(f"radio_{qid}")
@@ -1424,7 +1398,6 @@ def render_quiz() -> None:
                 elif selected == "(请选择)":
                     st.session_state.answers.pop(qid, None)
 
-            spent = finalize_timers()
             duration = None
             limit = None
             paper = region = year = None
@@ -1447,7 +1420,7 @@ def render_quiz() -> None:
                 year=year,
                 duration_sec=duration,
                 timed_limit_sec=limit,
-                time_spent=spent,
+                time_spent={},
             )
             clear_quiz_draft()
             st.session_state.result = result
@@ -1474,6 +1447,7 @@ def render_quiz() -> None:
                 st.session_state.pop(f"radio_{int(q['id'])}", None)
             persist_draft()
             st.rerun()
+
 def render_bank_analysis(detail: dict[str, Any]) -> bool:
     analysis_html = (detail.get("analysis_html") or detail.get("analysis") or "").strip()
     analysis_text = (detail.get("analysis_text") or strip_html(analysis_html)).strip()
@@ -1602,84 +1576,108 @@ def render_result() -> None:
 
 def render_wrong_book() -> None:
     st.subheader("错题本")
-    st.caption("交卷后自动入库；可按试卷目录查看，支持笔记、重点标记、已掌握状态。")
+    st.caption("先看试卷目录，再展开某套卷的错题详情，避免一次渲染过多导致卡顿。")
 
     catalog = wrong_book_paper_catalog()
-    papers = ["(全部)"] + [c["paper"] for c in catalog]
-    modules = ["(全部)"]
-    with open_user() as conn:
-        modules += [
-            r[0]
-            for r in conn.execute(
-                "SELECT DISTINCT module FROM wrong_book WHERE module IS NOT NULL AND module!='' ORDER BY module"
-            )
-        ]
-
-    # 试卷目录统计
-    with st.expander("错题目录（按试卷）", expanded=True):
-        if not catalog:
-            st.info("暂无错题目录。")
-        else:
-            for c in catalog:
-                st.write(
-                    f"- `{c.get('region') or ''}` {c.get('year') or ''} · **{c['paper']}**："
-                    f"错题 {c['wrong_n']}（未掌握 {c['open_n']}）· 最近 {c.get('last_wrong_at')}"
-                )
-
-    c1, c2, c3 = st.columns(3)
-    status = c1.selectbox("状态", ["open", "mastered", "(全部)"], index=0, key="wb_status")
-    module = c2.selectbox("模块", modules, index=0, key="wb_module")
-    paper = c3.selectbox("试卷", papers, index=0, key="wb_paper")
-    rows = list_wrong_book(status=status, module=module, paper=paper)
-    st.write(f"共 {len(rows)} 条")
-    if not rows:
-        st.info("暂无错题。去做几套题后会自动出现在这里。")
+    if not catalog:
+        st.info("暂无错题。交卷后会按试卷自动归档。")
         return
 
+    # 目录视图（轻量）
+    st.markdown("### 错题目录（按试卷）")
+    for i, c in enumerate(catalog):
+        label = f"{c.get('region') or ''} {c.get('year') or ''} · {c['paper']}".strip()
+        cols = st.columns([6, 1.2, 1.2, 1.6])
+        cols[0].write(f"**{label}**")
+        cols[1].write(f"错题 {c['wrong_n']}")
+        cols[2].write(f"未掌握 {c['open_n']}")
+        if cols[3].button("查看", key=f"wb_open_paper_{i}", use_container_width=True):
+            st.session_state.wb_selected_paper = c["paper"]
+            st.session_state.wb_page = 0
+
+    selected = st.session_state.get("wb_selected_paper")
+    if not selected:
+        st.info("点击某套卷的「查看」后，再加载该卷错题详情。")
+        return
+
+    st.markdown("---")
+    st.markdown(f"### 当前试卷：`{selected}`")
+    b1, b2, b3 = st.columns([1, 1, 2])
+    if b1.button("返回目录", use_container_width=True):
+        st.session_state.wb_selected_paper = None
+        st.rerun()
+    status = b2.selectbox("状态", ["open", "mastered", "(全部)"], index=0, key="wb_status_detail")
+
+    rows = list_wrong_book(status=status, module=None, paper=selected)
+    total = len(rows)
+    page_size = 8
+    page = int(st.session_state.get("wb_page") or 0)
+    max_page = max(0, (total - 1) // page_size)
+    page = max(0, min(page, max_page))
+    st.session_state.wb_page = page
+    start = page * page_size
+    end = start + page_size
+    page_rows = rows[start:end]
+    st.caption(f"共 {total} 条，当前第 {page+1}/{max_page+1} 页（每页 {page_size} 条）")
+
+    nav1, nav2, nav3 = st.columns(3)
+    if nav1.button("上一页", disabled=page <= 0, use_container_width=True):
+        st.session_state.wb_page = page - 1
+        st.rerun()
+    if nav2.button("下一页", disabled=page >= max_page, use_container_width=True):
+        st.session_state.wb_page = page + 1
+        st.rerun()
+    nav3.write("")
+
     starred_ids = load_starred_ids()
-    for i, row in enumerate(rows, start=1):
+    for i, row in enumerate(page_rows, start=start + 1):
         qid = int(row["question_id"])
-        with st.container(border=True):
-            star = "⭐" if (qid in starred_ids or int(row.get("starred") or 0) == 1) else ""
-            st.markdown(
-                f"**#{i}** {star} `{row.get('module')}` / `{row.get('category')}` · "
-                f"id={qid} · 错 {row.get('wrong_count')} 次 · 状态={row.get('status')}"
-            )
+        star = "⭐" if (qid in starred_ids or int(row.get("starred") or 0) == 1) else ""
+        # 默认折叠详情，先看摘要，点开再渲染图片/解析
+        title = (
+            f"#{i} {star} `{row.get('module')}` / `{row.get('category')}` · "
+            f"错{row.get('wrong_count')}次 · {row.get('status')}"
+        )
+        with st.expander(title, expanded=False):
             st.caption(
                 f"试卷：{row.get('region') or ''} {row.get('year') or ''} · "
                 f"{row.get('paper') or '(练习/未标注)'} · submission={row.get('submission_id')}"
             )
-            render_rich_content(row.get("stem"), fallback_text=strip_html(row.get("stem")))
-            try:
-                opts = json.loads(row.get("options_json") or "[]")
-            except json.JSONDecodeError:
-                opts = []
-            for opt in opts:
-                st.write(f"- {option_label(opt)}")
-                render_option_visual(opt)
+            # 摘要文本先出，图片按需
+            stem_text = strip_html(row.get("stem"))
+            st.write((stem_text[:180] + ("…" if len(stem_text) > 180 else "")) or "(无题干)")
+            if st.checkbox("显示完整题干/配图", key=f"wb_full_{qid}"):
+                render_rich_content(row.get("stem"), fallback_text=stem_text)
+                try:
+                    opts = json.loads(row.get("options_json") or "[]")
+                except json.JSONDecodeError:
+                    opts = []
+                for opt in opts:
+                    st.write(f"- {option_label(opt)}")
+                    render_option_visual(opt)
             st.error(f"最近作答：{row.get('last_user_answer')}")
             st.info(f"正确答案：{row.get('correct_answer')}")
-            if row.get("analysis"):
-                with st.expander("题库解析", expanded=False):
-                    render_rich_content(
-                        row.get("analysis"),
-                        fallback_text=strip_html(row.get("analysis")),
-                    )
+
+            if row.get("analysis") and st.checkbox("显示题库解析", key=f"wb_ana_{qid}"):
+                render_rich_content(
+                    row.get("analysis"),
+                    fallback_text=strip_html(row.get("analysis")),
+                )
 
             note_val = st.text_area(
                 "我的笔记",
                 value=row.get("note") or "",
                 key=f"wb_note_{qid}",
-                height=90,
+                height=80,
             )
             b1, b2, b3, b4 = st.columns(4)
             if b1.button("保存笔记", key=f"wb_save_{qid}"):
                 update_wrong_note(qid, note_val)
                 st.success("笔记已保存")
-            if b2.button("标记已掌握", key=f"wb_ok_{qid}"):
+            if b2.button("已掌握", key=f"wb_ok_{qid}"):
                 update_wrong_status(qid, "mastered")
                 st.rerun()
-            if b3.button("重新打开", key=f"wb_open_{qid}"):
+            if b3.button("重开", key=f"wb_open_{qid}"):
                 update_wrong_status(qid, "open")
                 st.rerun()
             star_label = "取消重点" if qid in starred_ids else "标为重点"
@@ -1687,15 +1685,17 @@ def render_wrong_book() -> None:
                 set_question_starred(qid, qid not in starred_ids, note=note_val)
                 st.rerun()
 
-            detail = {
-                "question_id": qid,
-                "user_answer": row.get("last_user_answer") or "",
-                "analysis": row.get("analysis") or "",
-            }
-            has_bank = bool((row.get("analysis") or "").strip())
-            render_on_demand_ai(
-                detail, button_prefix=f"wb_{i}", force_visible=not has_bank
-            )
+            if st.checkbox("需要 AI 解析", key=f"wb_ai_toggle_{qid}"):
+                detail = {
+                    "question_id": qid,
+                    "user_answer": row.get("last_user_answer") or "",
+                    "analysis": row.get("analysis") or "",
+                }
+                has_bank = bool((row.get("analysis") or "").strip())
+                render_on_demand_ai(
+                    detail, button_prefix=f"wb_{qid}", force_visible=not has_bank
+                )
+
 def render_plan_and_chat() -> None:
     st.subheader("学习规划与对话辅导")
     st.caption("读取做题统计、套卷用时、错题本趋势、学习者档案与历史对话。")
@@ -1922,7 +1922,7 @@ def render_xingce_module() -> None:
 def main() -> None:
     st.set_page_config(page_title="考公助手（自用版）", layout="wide")
     st.title("考公助手（自用版）")
-    st.caption("整卷浏览 · 顶部计时 · 草稿自动保存 · 重点题 · 错题按试卷归档")
+    st.caption("整卷浏览 · 页眉常驻计时 · 草稿自动保存 · 重点题 · 错题目录分页")
 
     init_session()
     ensure_user_db()
