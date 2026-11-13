@@ -1,6 +1,6 @@
 ![考公助手题头：练习有节奏，复盘有依据](./docs/images/header.svg)
 
-# 考公助手（自用版）
+# 考公助手
 
 基于 **公考脑库（行测）+ SLB 申论真题 + Streamlit + pi Agent** 的本地学习助手。
 

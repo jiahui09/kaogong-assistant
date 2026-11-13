@@ -2097,8 +2097,8 @@ def render_xingce_module() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="考公助手（自用版）", layout="wide")
-    st.title("考公助手（自用版）")
+    st.set_page_config(page_title="考公助手", layout="wide")
+    st.title("考公助手")
     st.caption("整卷浏览 · 页眉常驻计时 · 草稿自动保存 · 六列错题方块")
 
     init_session()
