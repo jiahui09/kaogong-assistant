@@ -26,8 +26,9 @@ AGENT_BASE = "http://127.0.0.1:8787"
 DEFAULT_LIMIT = 10
 DEFAULT_EXAM_MINUTES = 120
 FOCUS_REGIONS = ("国考", "河南")
-IMG_SRC_RE = re.compile(
-    r"""<img\b[^>]*?\bsrc\s*=\s*['\"]([^'\"]+)['\"][^>]*>""",
+IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
+IMG_ATTR_RE = re.compile(
+    r"""(\w+)\s*=\s*(?:['\"]([^'\"]*)['\"]|([^\s>]+))""",
     re.IGNORECASE,
 )
 
@@ -136,70 +137,127 @@ def resolve_image_path(src: str) -> Path | None:
     return missing if missing.exists() else None
 
 
-def extract_image_paths(html: str | None) -> list[Path]:
+def parse_img_tag(tag: str) -> dict[str, str]:
+    attrs: dict[str, str] = {}
+    for m in IMG_ATTR_RE.finditer(tag):
+        key = m.group(1).lower()
+        val = m.group(2) if m.group(2) is not None else (m.group(3) or "")
+        attrs[key] = val
+    return attrs
+
+
+def extract_images(html: str | None) -> list[dict[str, Any]]:
+    """解析 HTML 中的图片，区分公式小图与题干大图。"""
     if not html:
         return []
-    paths: list[Path] = []
-    seen: set[str] = set()
-    for src in IMG_SRC_RE.findall(html):
-        p = resolve_image_path(src)
-        if not p:
-            continue
-        key = str(p)
-        if key in seen:
-            continue
-        seen.add(key)
-        paths.append(p)
-    return paths
-
-
-def html_to_streamlit_safe(html: str | None) -> str:
-    """保留图片，其余标签降级为纯文本，避免危险 HTML。"""
-    if not html:
-        return ""
-
-    def repl(match: re.Match[str]) -> str:
-        src = match.group(1)
+    out: list[dict[str, Any]] = []
+    for tag in IMG_TAG_RE.findall(html):
+        attrs = parse_img_tag(tag)
+        src = attrs.get("src") or ""
         path = resolve_image_path(src)
         if not path:
-            return f"[图片缺失: {escape(src)}]"
-        # Streamlit 可直接显示本地路径图片；这里用 markdown 图片语法更稳
-        return f"\n\n![]({path.as_posix()})\n\n"
+            continue
+        width = None
+        height = None
+        try:
+            if attrs.get("width"):
+                width = int(re.sub(r"[^0-9]", "", attrs["width"]) or 0) or None
+            if attrs.get("height"):
+                height = int(re.sub(r"[^0-9]", "", attrs["height"]) or 0) or None
+        except ValueError:
+            width = height = None
+        kind = "formula" if ("公式图" in src or attrs.get("flag") == "tex") else "figure"
+        # 没有标注时，按文件尺寸启发式：很扁/很小的当公式
+        if kind == "figure":
+            try:
+                from PIL import Image
 
-    with_imgs = IMG_SRC_RE.sub(repl, html)
-    # 粗暴去标签，保留图片 markdown
-    text = re.sub(r"<(?!/?img\b)[^>]+>", "", with_imgs, flags=re.IGNORECASE)
-    text = text.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">")
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+                with Image.open(path) as im:
+                    w, h = im.size
+                if (h and h <= 48) or (w and h and w / max(h, 1) >= 4 and h <= 80):
+                    kind = "formula"
+                    width = width or w
+                    height = height or h
+            except Exception:
+                pass
+        out.append(
+            {
+                "path": path,
+                "src": src,
+                "kind": kind,
+                "width": width,
+                "height": height,
+            }
+        )
+    return out
+
+
+def extract_image_paths(html: str | None) -> list[Path]:
+    return [img["path"] for img in extract_images(html)]
+
+
+def render_one_image(img: dict[str, Any], *, option_mode: bool = False) -> None:
+    path: Path = img["path"]
+    kind = img.get("kind") or "figure"
+    width = img.get("width")
+    try:
+        if kind == "formula":
+            # 公式/符号：按原始宽度显示，避免被拉成整行大图
+            w = int(width or 0)
+            if w <= 0:
+                w = 80
+            w = max(24, min(w, 280))
+            st.image(str(path), width=w)
+        elif option_mode:
+            w = int(width or 220)
+            w = max(80, min(w, 320))
+            st.image(str(path), width=w)
+        else:
+            # 题干大图：限制最大宽度，避免撑爆页面
+            w = int(width or 680)
+            w = max(240, min(w, 760))
+            st.image(str(path), width=w)
+    except Exception as exc:  # noqa: BLE001
+        st.caption(f"图片加载失败：{path.name}（{exc}）")
 
 
 def render_rich_content(html_or_text: str | None, *, fallback_text: str | None = None) -> None:
-    """优先按含图 HTML 渲染；无图则退回纯文本。"""
+    """按文本块 + 图片交错渲染；公式小图不再被放大。"""
     raw = html_or_text or ""
-    imgs = extract_image_paths(raw)
-    if imgs or "<img" in raw.lower():
-        md = html_to_streamlit_safe(raw)
-        if md:
-            st.markdown(md)
-        else:
-            st.write(fallback_text or strip_html(raw) or "(内容为空)")
-        # 再保险：逐张 st.image，避免 markdown 某些环境下不加载本地图
-        for p in imgs:
-            try:
-                st.image(str(p), use_container_width=True)
-            except TypeError:
-                st.image(str(p), use_column_width=True)
-            except Exception as exc:  # noqa: BLE001
-                st.caption(f"图片加载失败：{p.name}（{exc}）")
+    if "<img" not in raw.lower():
+        text = fallback_text if fallback_text is not None else strip_html(raw)
+        st.write(text or "(内容为空)")
         return
-    text = fallback_text if fallback_text is not None else strip_html(raw)
-    st.write(text or "(内容为空)")
+
+    parts = IMG_TAG_RE.split(raw)
+    tags = IMG_TAG_RE.findall(raw)
+    # parts[0], tag0, parts[1], tag1, ...
+    for i, text_html in enumerate(parts):
+        text = strip_html(text_html)
+        if text:
+            st.write(text)
+        if i < len(tags):
+            attrs = parse_img_tag(tags[i])
+            src = attrs.get("src") or ""
+            path = resolve_image_path(src)
+            if not path:
+                st.caption(f"[图片缺失: {escape(src)}]")
+                continue
+            width = None
+            try:
+                if attrs.get("width"):
+                    width = int(re.sub(r"[^0-9]", "", attrs["width"]) or 0) or None
+            except ValueError:
+                width = None
+            kind = "formula" if ("公式图" in src or attrs.get("flag") == "tex") else "figure"
+            render_one_image(
+                {"path": path, "src": src, "kind": kind, "width": width},
+            )
 
 
 def option_has_image(opt: dict[str, Any]) -> bool:
     html = str(opt.get("html") or opt.get("label") or "")
-    return bool(extract_image_paths(html)) or "<img" in html.lower()
+    return bool(extract_images(html)) or "<img" in html.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -646,6 +704,121 @@ def save_shenlun_attempt(paper_id: int, question_qid: str, answer_text: str) -> 
         conn.commit()
 
 
+def save_quiz_draft(payload: dict[str, Any]) -> None:
+    """实时保存当前作答草稿，防止页面关闭丢失。"""
+    ensure_user_db()
+    raw = json.dumps(payload, ensure_ascii=False)
+    with open_user() as conn:
+        conn.execute(
+            """
+            INSERT INTO quiz_drafts(id, draft_json, updated_at)
+            VALUES (1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                draft_json=excluded.draft_json,
+                updated_at=excluded.updated_at
+            """,
+            (raw, now_iso()),
+        )
+        conn.commit()
+
+
+def load_quiz_draft() -> dict[str, Any] | None:
+    ensure_user_db()
+    with open_user() as conn:
+        row = conn.execute(
+            "SELECT draft_json, updated_at FROM quiz_drafts WHERE id=1"
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        data = json.loads(row["draft_json"])
+    except json.JSONDecodeError:
+        return None
+    if isinstance(data, dict):
+        data["_updated_at"] = row["updated_at"]
+        return data
+    return None
+
+
+def clear_quiz_draft() -> None:
+    ensure_user_db()
+    with open_user() as conn:
+        conn.execute("DELETE FROM quiz_drafts WHERE id=1")
+        conn.commit()
+
+
+def build_draft_payload() -> dict[str, Any]:
+    questions = st.session_state.get("questions") or []
+    # 草稿只存必要字段，避免 user.db 膨胀
+    slim_qs = [
+        {
+            "id": int(q["id"]),
+            "qid": q.get("qid"),
+            "module": q.get("module"),
+            "category": q.get("category"),
+            "region": q.get("region"),
+            "year": q.get("year"),
+            "paper": q.get("paper"),
+            "stem": q.get("stem_html") or q.get("stem"),
+            "options": q.get("options") or [],
+            "answer": q.get("answer"),
+            "analysis": q.get("analysis_html") or q.get("analysis"),
+            "material": q.get("material_html") or q.get("material"),
+            "has_image": q.get("has_image"),
+        }
+        for q in questions
+    ]
+    return {
+        "mode": st.session_state.get("mode"),
+        "quiz_meta": st.session_state.get("quiz_meta") or {},
+        "answers": {str(k): v for k, v in (st.session_state.get("answers") or {}).items()},
+        "time_spent": {str(k): v for k, v in (st.session_state.get("time_spent") or {}).items()},
+        "exam_started_at": st.session_state.get("exam_started_at"),
+        "exam_limit_sec": st.session_state.get("exam_limit_sec"),
+        "current_q_idx": st.session_state.get("current_q_idx", 0),
+        "questions": slim_qs,
+    }
+
+
+def persist_draft() -> None:
+    if not st.session_state.get("questions"):
+        return
+    save_quiz_draft(build_draft_payload())
+
+
+def restore_draft_if_needed() -> bool:
+    """若当前无题目但库中有草稿，则恢复。"""
+    if st.session_state.get("questions"):
+        return False
+    draft = load_quiz_draft()
+    if not draft or not draft.get("questions"):
+        return False
+    qs = []
+    for raw in draft["questions"]:
+        item = dict(raw)
+        # 草稿精简字段 -> 正常题目字段
+        item["stem"] = raw.get("stem") or ""
+        item["analysis"] = raw.get("analysis") or ""
+        item["material"] = raw.get("material") or ""
+        item["options"] = raw.get("options") or []
+        qs.append(_normalize_question(item))
+    st.session_state.questions = qs
+    st.session_state.answers = {
+        int(k): v for k, v in (draft.get("answers") or {}).items()
+    }
+    st.session_state.time_spent = {
+        int(k): int(v) for k, v in (draft.get("time_spent") or {}).items()
+    }
+    st.session_state.mode = draft.get("mode") or "practice"
+    st.session_state.quiz_meta = draft.get("quiz_meta") or {}
+    st.session_state.exam_started_at = draft.get("exam_started_at")
+    st.session_state.exam_limit_sec = draft.get("exam_limit_sec") or DEFAULT_EXAM_MINUTES * 60
+    st.session_state.current_q_idx = int(draft.get("current_q_idx") or 0)
+    st.session_state.page = "quiz"
+    st.session_state.draft_restored = True
+    return True
+
+
 def recent_submissions(limit: int = 8) -> list[dict[str, Any]]:
     with open_user() as conn:
         rows = conn.execute(
@@ -765,6 +938,9 @@ def init_session() -> None:
         "exam_limit_sec": DEFAULT_EXAM_MINUTES * 60,
         "question_entered_at": {},
         "time_spent": {},
+        "current_q_idx": 0,
+        "submit_flash": None,
+        "draft_restored": False,
         "shenlun_paper_id": None,
         "shenlun_answers": {},
     }
@@ -784,17 +960,12 @@ def option_label(opt: dict[str, Any]) -> str:
 def render_option_visual(opt: dict[str, Any]) -> None:
     key = (opt.get("key") or "?").upper()
     html = str(opt.get("html") or opt.get("label") or "")
-    imgs = extract_image_paths(html)
+    imgs = extract_images(html)
     if not imgs:
         return
-    st.caption(f"选项 {key} 配图")
-    for p in imgs:
-        try:
-            st.image(str(p), use_container_width=True)
-        except TypeError:
-            st.image(str(p), use_column_width=True)
-        except Exception as exc:  # noqa: BLE001
-            st.caption(f"选项图加载失败：{p.name}（{exc}）")
+    st.caption(f"选项 {key}")
+    for img in imgs:
+        render_one_image(img, option_mode=True)
 
 
 def format_duration(sec: int | None) -> str:
@@ -850,10 +1021,16 @@ def start_quiz(
     st.session_state.quiz_meta = meta
     st.session_state.time_spent = {}
     st.session_state.question_entered_at = {}
-    st.session_state.exam_started_at = time.time() if mode == "exam" else None
+    st.session_state.current_q_idx = 0
+    st.session_state.submit_flash = None
+    st.session_state.draft_restored = False
+    st.session_state.exam_started_at = time.time() if mode == "exam" else time.time()
     st.session_state.exam_limit_sec = timed_limit_sec or DEFAULT_EXAM_MINUTES * 60
     st.session_state.one_explanations = {}
     st.session_state.one_errors = {}
+    # 新开一套题时清掉旧草稿，并立即写入新草稿
+    clear_quiz_draft()
+    persist_draft()
 
 
 # ---------------------------------------------------------------------------
@@ -861,8 +1038,49 @@ def start_quiz(
 # ---------------------------------------------------------------------------
 
 @st.fragment(run_every=1)
+def render_floating_timer() -> None:
+    """右下角迷你计时弹窗：下滑离开主计时区后仍可持续提醒。"""
+    if not st.session_state.get("questions"):
+        return
+    if not st.session_state.get("exam_started_at"):
+        return
+    started = float(st.session_state.exam_started_at)
+    elapsed = int(time.time() - started)
+    limit = int(st.session_state.exam_limit_sec or 0)
+    remain = limit - elapsed if st.session_state.get("mode") == "exam" else None
+    answered = sum(
+        1
+        for q in st.session_state.questions
+        if st.session_state.answers.get(int(q["id"]))
+    )
+    total = len(st.session_state.questions)
+    remain_text = (
+        format_duration(remain)
+        if remain is not None and remain >= 0
+        else ("已超时" if remain is not None else "练习中")
+    )
+    # 固定小浮窗，不抢视线
+    st.markdown(
+        f"""
+<div style="
+  position: fixed; right: 18px; bottom: 18px; z-index: 9999;
+  background: rgba(20,24,36,.92); color: #f5f7ff;
+  border: 1px solid rgba(255,255,255,.18); border-radius: 12px;
+  padding: 10px 12px; min-width: 148px; max-width: 180px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.28); font-size: 13px;
+  backdrop-filter: blur(6px);">
+  <div style="opacity:.75; margin-bottom:4px;">⏱ 计时提醒</div>
+  <div><b>已用</b> {format_duration(elapsed)}</div>
+  <div><b>剩余</b> {remain_text}</div>
+  <div><b>进度</b> {answered}/{total}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def render_exam_timer_banner() -> None:
-    """每秒自动刷新，不依赖用户操作。"""
+    """页内主计时条（套卷模式）。"""
     if st.session_state.mode != "exam" or not st.session_state.exam_started_at:
         return
     started = float(st.session_state.exam_started_at)
@@ -884,7 +1102,7 @@ def render_exam_timer_banner() -> None:
     if remain < 0:
         st.info("参考时长已到，可继续作答；本模式不做强制交卷。")
     else:
-        st.caption("计时每秒自动刷新，仅供参考，到时不会强制交卷。")
+        st.caption("下滑后右下角会保留迷你计时弹窗；到时不强制交卷。")
 
 
 # ---------------------------------------------------------------------------
@@ -982,11 +1200,72 @@ def render_exam_filters() -> None:
             st.rerun()
 
 
+def render_answer_card(questions: list[dict[str, Any]]) -> None:
+    """答题卡：已答/未答一目了然，点击跳题。"""
+    answers = st.session_state.answers or {}
+    cur = int(st.session_state.get("current_q_idx") or 0)
+    total = len(questions)
+    answered_n = sum(1 for q in questions if answers.get(int(q["id"])))
+    st.markdown(f"**答题卡**（已答 {answered_n}/{total}）")
+    cols = st.columns(10)
+    for i, q in enumerate(questions):
+        qid = int(q["id"])
+        done = bool(answers.get(qid))
+        label = f"{i+1}{'✓' if done else ''}"
+        help_txt = "已作答" if done else "未作答"
+        if cols[i % 10].button(
+            label,
+            key=f"card_{i}_{qid}",
+            help=help_txt,
+            type="primary" if i == cur else "secondary",
+            use_container_width=True,
+        ):
+            # 切题时结算上一题计时
+            if questions:
+                touch_question_timer(int(questions[cur]["id"]))
+            st.session_state.current_q_idx = i
+            persist_draft()
+            st.rerun()
+
+
+def category_time_stats(questions: list[dict[str, Any]]) -> list[tuple[str, int, float]]:
+    spent = st.session_state.time_spent or {}
+    bucket: dict[str, list[int]] = {}
+    for q in questions:
+        qid = int(q["id"])
+        cat = str(q.get("category") or q.get("module") or "未分类")
+        bucket.setdefault(cat, []).append(int(spent.get(qid) or 0))
+    rows: list[tuple[str, int, float]] = []
+    for cat, vals in bucket.items():
+        n = len(vals)
+        avg = (sum(vals) / n) if n else 0.0
+        rows.append((cat, n, avg))
+    rows.sort(key=lambda x: x[2], reverse=True)
+    return rows
+
+
 def render_quiz() -> None:
     questions: list[dict[str, Any]] = st.session_state.questions
     if not questions:
-        st.info("请在左侧选择练习筛选或套卷，开始做题。")
+        draft = load_quiz_draft()
+        if draft and draft.get("questions"):
+            st.info(
+                f"检测到未交卷草稿（更新于 {draft.get('_updated_at')}）。"
+                "可一键恢复，避免重做。"
+            )
+            if st.button("恢复未完成作答", type="primary"):
+                restore_draft_if_needed()
+                st.rerun()
+            if st.button("丢弃草稿"):
+                clear_quiz_draft()
+                st.rerun()
+        else:
+            st.info("请在左侧选择练习筛选或套卷，开始做题。")
         return
+
+    if st.session_state.get("draft_restored"):
+        st.success("已恢复未交卷草稿，可继续作答。")
+        st.session_state.draft_restored = False
 
     meta = st.session_state.quiz_meta or {}
     if st.session_state.mode == "exam":
@@ -1001,36 +1280,45 @@ def render_quiz() -> None:
             f"模块={meta.get('module','(不限)')} / 题型={meta.get('category','(不限)')}"
         )
 
-    for i, q in enumerate(questions, start=1):
-        qid = int(q["id"])
-        with st.container(border=True):
-            st.markdown(
-                f"**第 {i} 题** · `{q.get('module')}` / `{q.get('category')}` · "
-                f"{q.get('region')} {q.get('year')} · id={qid}"
-            )
-            if q.get("material_html") or q.get("material_text"):
-                with st.expander("材料", expanded=False):
-                    render_rich_content(
-                        q.get("material_html"),
-                        fallback_text=q.get("material_text"),
-                    )
-            render_rich_content(q.get("stem_html"), fallback_text=q.get("stem_text"))
+    # 迷你浮动计时（下滑后仍可见）
+    render_floating_timer()
 
-            opts = q.get("options") or []
-            choices = [option_label(o) for o in opts]
-            keys = [(o.get("key") or "").upper() for o in opts]
-            if not choices:
-                st.warning("该题无选项数据，跳过。")
-                continue
+    render_answer_card(questions)
 
-            # 选项含图时先展示配图，再给 radio 选字母
+    # 单题模式：只渲染当前题，显著降低卡顿
+    idx = int(st.session_state.get("current_q_idx") or 0)
+    idx = max(0, min(idx, len(questions) - 1))
+    st.session_state.current_q_idx = idx
+    q = questions[idx]
+    qid = int(q["id"])
+    touch_question_timer(qid)
+
+    with st.container(border=True):
+        spent_now = int((st.session_state.time_spent or {}).get(qid) or 0)
+        st.markdown(
+            f"**第 {idx + 1}/{len(questions)} 题** · `{q.get('module')}` / `{q.get('category')}` · "
+            f"{q.get('region')} {q.get('year')} · id={qid} · 本题已用 {format_duration(spent_now)}"
+        )
+        if q.get("material_html") or q.get("material_text"):
+            with st.expander("材料", expanded=False):
+                render_rich_content(
+                    q.get("material_html"),
+                    fallback_text=q.get("material_text"),
+                )
+        render_rich_content(q.get("stem_html"), fallback_text=q.get("stem_text"))
+
+        opts = q.get("options") or []
+        choices = [option_label(o) for o in opts]
+        keys = [(o.get("key") or "").upper() for o in opts]
+        if not choices:
+            st.warning("该题无选项数据。")
+        else:
             if any(option_has_image(o) for o in opts):
                 cols = st.columns(min(4, len(opts)) or 1)
                 for j, opt in enumerate(opts):
                     with cols[j % len(cols)]:
                         render_option_visual(opt)
 
-            touch_question_timer(qid)
             radio_options = ["(请选择)"] + choices
             current = st.session_state.answers.get(qid)
             default_idx = keys.index(current) + 1 if current in keys else 0
@@ -1045,23 +1333,58 @@ def render_quiz() -> None:
                 st.session_state.answers.pop(qid, None)
             else:
                 st.session_state.answers[qid] = keys[choices.index(selected)]
+            persist_draft()
 
-    answered = sum(1 for q in questions if st.session_state.answers.get(int(q["id"])))
-    st.write(f"已作答 {answered} / {len(questions)}")
+    nav1, nav2, nav3 = st.columns(3)
+    with nav1:
+        if st.button("上一题", use_container_width=True, disabled=idx <= 0):
+            touch_question_timer(qid)
+            st.session_state.current_q_idx = idx - 1
+            persist_draft()
+            st.rerun()
+    with nav2:
+        if st.button("下一题", use_container_width=True, disabled=idx >= len(questions) - 1):
+            touch_question_timer(qid)
+            st.session_state.current_q_idx = idx + 1
+            persist_draft()
+            st.rerun()
+    with nav3:
+        if st.button("清空本题", use_container_width=True):
+            st.session_state.answers.pop(qid, None)
+            persist_draft()
+            st.rerun()
 
-    col1, col2 = st.columns(2)
-    with col1:
+    answered = sum(1 for qq in questions if st.session_state.answers.get(int(qq["id"])))
+    st.write(f"已作答 {answered} / {len(questions)}（答案已自动保存到本地草稿）")
+
+    with st.expander("本题型耗时速览", expanded=False):
+        rows = category_time_stats(questions)
+        if not rows:
+            st.caption("暂无计时数据。点击题目后开始计时。")
+        else:
+            for cat, n, avg in rows:
+                st.write(f"- `{cat}`：{n} 题，平均 {format_duration(int(avg))}")
+
+    if st.session_state.mode == "exam" and st.session_state.exam_started_at:
+        elapsed = int(time.time() - float(st.session_state.exam_started_at))
+        if elapsed >= int(st.session_state.exam_limit_sec or 0):
+            st.warning("参考时长已到，可继续作答；本模式不做强制交卷。")
+
+    c1, c2 = st.columns(2)
+    with c1:
         if st.button("交卷批分", type="primary", use_container_width=True):
             spent = finalize_timers()
             duration = None
             limit = None
             paper = region = year = None
-            if st.session_state.mode == "exam" and st.session_state.exam_started_at:
+            if st.session_state.exam_started_at:
                 duration = int(time.time() - float(st.session_state.exam_started_at))
+            if st.session_state.mode == "exam":
                 limit = int(st.session_state.exam_limit_sec or 0)
                 paper = (st.session_state.quiz_meta or {}).get("paper")
                 region = (st.session_state.quiz_meta or {}).get("region")
                 year = (st.session_state.quiz_meta or {}).get("year")
+            unanswered = len(questions) - answered
             result = save_submission(
                 questions,
                 st.session_state.answers,
@@ -1073,15 +1396,22 @@ def render_quiz() -> None:
                 timed_limit_sec=limit,
                 time_spent=spent,
             )
+            clear_quiz_draft()
             st.session_state.result = result
             st.session_state.page = "result"
+            st.session_state.submit_flash = {
+                "score": result["score"],
+                "correct": result["correct"],
+                "total": result["total"],
+                "unanswered": unanswered,
+                "submission_id": result["submission_id"],
+            }
+            st.balloons()
             st.rerun()
-    with col2:
-        if st.button("清空本题答案", use_container_width=True):
-            st.session_state.answers = {}
-            st.rerun()
-
-
+    with c2:
+        if st.button("保存进度（不交卷）", use_container_width=True):
+            persist_draft()
+            st.success("进度已保存到 user.db 草稿，关闭页面后可恢复。")
 def render_bank_analysis(detail: dict[str, Any]) -> bool:
     analysis_html = (detail.get("analysis_html") or detail.get("analysis") or "").strip()
     analysis_text = (detail.get("analysis_text") or strip_html(analysis_html)).strip()
@@ -1132,6 +1462,17 @@ def render_on_demand_ai(
 
 
 def render_result() -> None:
+    flash = st.session_state.get("submit_flash")
+    if flash:
+        st.success(
+            f"✅ 交卷成功！得分 {flash.get('score')} 分｜"
+            f"正确 {flash.get('correct')}/{flash.get('total')}｜"
+            f"未作答 {flash.get('unanswered')}｜"
+            f"submission_id={flash.get('submission_id')}"
+        )
+        st.toast("交卷成功，已写入成绩与错题本", icon="✅")
+        st.session_state.submit_flash = None
+
     result = st.session_state.result
     if not result:
         st.warning("还没有交卷记录。")
@@ -1472,9 +1813,16 @@ def render_xingce_module() -> None:
     else:
         render_exam_filters()
 
+    # 交卷后自动切到阅卷页，避免用户以为没交上
+    default_tab = 0
+    if st.session_state.get("page") == "result" or st.session_state.get("result"):
+        default_tab = 1
     tab_quiz, tab_result, tab_wrong, tab_plan = st.tabs(
         ["做题", "阅卷结果", "错题本", "学习规划 / 对话"]
     )
+    # Streamlit tabs 无法直接指定默认激活；用结果页提示条补偿
+    if default_tab == 1:
+        st.info("已交卷：请查看上方「阅卷结果」页签。")
     with tab_quiz:
         render_quiz()
     with tab_result:
@@ -1491,10 +1839,13 @@ def render_xingce_module() -> None:
 def main() -> None:
     st.set_page_config(page_title="考公助手（自用版）", layout="wide")
     st.title("考公助手（自用版）")
-    st.caption("行测 / 申论分模块 · 套卷计时自动刷新 · 错题本笔记 · 国考/河南重点")
+    st.caption("答题卡单题模式 · 浮动计时 · 草稿自动保存 · 错题本 · 行测/申论分模块")
 
     init_session()
     ensure_user_db()
+    # 页面刷新后自动尝试恢复未交卷草稿（不强制）
+    if not st.session_state.get("questions"):
+        restore_draft_if_needed()
 
     subject = st.sidebar.radio(
         "大模块",

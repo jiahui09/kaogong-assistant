@@ -84,6 +84,12 @@ CREATE TABLE IF NOT EXISTS shenlun_attempts (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS quiz_drafts (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    draft_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS ix_answers_submission ON answers(submission_id);
 CREATE INDEX IF NOT EXISTS ix_answers_question ON answers(question_id);
 CREATE INDEX IF NOT EXISTS ix_chat_created ON chat_messages(created_at);
