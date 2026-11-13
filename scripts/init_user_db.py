@@ -90,6 +90,13 @@ CREATE TABLE IF NOT EXISTS quiz_drafts (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS starred_questions (
+    question_id INTEGER PRIMARY KEY,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS ix_answers_submission ON answers(submission_id);
 CREATE INDEX IF NOT EXISTS ix_answers_question ON answers(question_id);
 CREATE INDEX IF NOT EXISTS ix_chat_created ON chat_messages(created_at);
@@ -121,6 +128,19 @@ def migrate(conn: sqlite3.Connection) -> None:
     ans_cols = _existing_columns(conn, "answers")
     if "time_spent_sec" not in ans_cols:
         conn.execute("ALTER TABLE answers ADD COLUMN time_spent_sec INTEGER")
+
+    wrong_cols = _existing_columns(conn, "wrong_book")
+    for col, ddl in [
+        ("paper", "ALTER TABLE wrong_book ADD COLUMN paper TEXT"),
+        ("region", "ALTER TABLE wrong_book ADD COLUMN region TEXT"),
+        ("year", "ALTER TABLE wrong_book ADD COLUMN year TEXT"),
+        ("submission_id", "ALTER TABLE wrong_book ADD COLUMN submission_id INTEGER"),
+        ("starred", "ALTER TABLE wrong_book ADD COLUMN starred INTEGER NOT NULL DEFAULT 0"),
+    ]:
+        if col not in wrong_cols:
+            conn.execute(ddl)
+    # 索引放在加列之后，兼容旧库升级
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_wrong_paper ON wrong_book(paper)")
 
     # 默认学习者档案
     row = conn.execute("SELECT id FROM learner_profile WHERE id=1").fetchone()
