@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="520" viewBox="0 0 1600 520" role="img" aria-labelledby="title desc">
+  <title id="title">考公助手：练习、复盘、再进步</title>
+  <desc id="desc">深蓝色题头，展示本地练习、即时批分、错题复盘与 AI 规划，配有计时条和六列题号的抽象界面插画。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101b34"/><stop offset="1" stop-color="#192e46"/></linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#74e6c3"/><stop offset="1" stop-color="#a3bffa"/></linearGradient>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="#c8e7f4" opacity=".09"/></pattern>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="170%"><feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#040d1d" flood-opacity=".35"/></filter>
+  </defs>
+  <rect width="1600" height="520" rx="24" fill="url(#bg)"/>
+  <rect x="800" width="800" height="520" fill="url(#dots)"/>
+  <path d="M935 520 1430 0M1095 520 1590 0" stroke="#4c7384" stroke-width="1" opacity=".22"/>
+  <g font-family="'Noto Sans CJK SC','Microsoft YaHei','PingFang SC',sans-serif">
+    <rect x="84" y="68" width="8" height="25" rx="4" fill="#74e6c3"/>
+    <text x="108" y="88" fill="#b9cfdf" font-size="20" letter-spacing="3">KAOGONG ASSISTANT</text>
+    <text x="80" y="198" fill="#f5f8fc" font-size="76" font-weight="700" letter-spacing="5">考公助手</text>
+    <text x="84" y="261" fill="#d3e0ec" font-size="30">练习有节奏，复盘有依据。</text>
+    <rect x="84" y="300" width="380" height="3" rx="1.5" fill="url(#accent)"/>
+    <text x="84" y="350" fill="#b9cfdf" font-size="22">本地题库 · 即时批分 · 错题复盘 · AI 规划</text>
+    <g font-size="16" fill="#c6d8e7">
+      <rect x="84" y="396" width="118" height="38" rx="19" fill="#ffffff" fill-opacity=".07" stroke="#ffffff" stroke-opacity=".12"/><text x="143" y="421" text-anchor="middle">Streamlit</text>
+      <rect x="214" y="396" width="118" height="38" rx="19" fill="#ffffff" fill-opacity=".07" stroke="#ffffff" stroke-opacity=".12"/><text x="273" y="421" text-anchor="middle">pi Agent</text>
+      <rect x="344" y="396" width="118" height="38" rx="19" fill="#ffffff" fill-opacity=".07" stroke="#ffffff" stroke-opacity=".12"/><text x="403" y="421" text-anchor="middle">SQLite</text>
+    </g>
+    <g transform="translate(920 63)" filter="url(#shadow)">
+      <rect width="580" height="394" rx="18" fill="#f3f7fb"/>
+      <path d="M18 0H562Q580 0 580 18V57H0V18Q0 0 18 0" fill="#e3ecf4"/>
+      <circle cx="25" cy="29" r="5" fill="#fb8e91"/><circle cx="44" cy="29" r="5" fill="#edc86b"/><circle cx="63" cy="29" r="5" fill="#6bc6ab"/>
+      <text x="548" y="35" text-anchor="end" fill="#587086" font-size="15">练习 → 复盘 → 再练习</text>
+      <rect x="25" y="78" width="530" height="48" rx="10" fill="#19304a"/>
+      <circle cx="50" cy="102" r="11" fill="none" stroke="#80e1c5" stroke-width="2"/><path d="M50 95v7l5 3" fill="none" stroke="#80e1c5" stroke-width="2"/>
+      <text x="72" y="109" fill="#eef7ff" font-size="17">专注作答</text><text x="530" y="109" fill="#80e1c5" text-anchor="end" font-size="17">页眉常驻计时</text>
+      <text x="28" y="165" fill="#29405a" font-size="21" font-weight="700">一道题，一个清晰的改进点</text>
+      <rect x="27" y="185" width="290" height="9" rx="4" fill="#d6e1ec"/><rect x="27" y="204" width="242" height="9" rx="4" fill="#d6e1ec"/>
+      <rect x="27" y="239" width="286" height="38" rx="8" fill="#e1f2ed" stroke="#9ad2bf"/><circle cx="47" cy="258" r="8" fill="#359b7e"/><path d="m43 258 3 3 5-6" fill="none" stroke="#fff" stroke-width="2"/><text x="65" y="264" fill="#28745e" font-size="16">看清条件，再作选择</text>
+      <rect x="27" y="288" width="286" height="38" rx="8" fill="#fff" stroke="#d6e1ec"/><circle cx="47" cy="307" r="8" fill="none" stroke="#b3c4d4" stroke-width="2"/><rect x="65" y="303" width="174" height="8" rx="4" fill="#d6e1ec"/>
+      <text x="346" y="211" fill="#60778c" font-size="15">错题目录 · 六列切题</text>
+      <g fill="#e4ecf4" stroke="#c8d7e5"><rect x="346" y="235" width="28" height="34" rx="5"/><rect x="381" y="235" width="28" height="34" rx="5"/><rect x="416" y="235" width="28" height="34" rx="5" fill="#386aab" stroke="#386aab"/><rect x="451" y="235" width="28" height="34" rx="5"/><rect x="486" y="235" width="28" height="34" rx="5"/><rect x="521" y="235" width="28" height="34" rx="5"/><rect x="346" y="281" width="28" height="34" rx="5"/><rect x="381" y="281" width="28" height="34" rx="5"/><rect x="416" y="281" width="28" height="34" rx="5"/><rect x="451" y="281" width="28" height="34" rx="5"/><rect x="486" y="281" width="28" height="34" rx="5"/><rect x="521" y="281" width="28" height="34" rx="5"/></g>
+      <g font-size="13" text-anchor="middle" fill="#476078"><text x="360" y="257">1</text><text x="395" y="257">2</text><text x="430" y="257" fill="#fff">3</text><text x="465" y="257">4</text><text x="500" y="257">5</text><text x="535" y="257">6</text><text x="360" y="303">7</text><text x="395" y="303">8</text><text x="430" y="303">9</text><text x="465" y="303">10</text><text x="500" y="303">11</text><text x="535" y="303">12</text></g>
+      <text x="28" y="364" fill="#71879a" font-size="14">本地优先 / 自动保存 / 按需 AI 辅导</text>
+    </g>
+  </g>
+</svg>
