@@ -78,8 +78,13 @@ def open_user() -> sqlite3.Connection:
     return conn
 
 
-def parse_options(raw: str | None) -> list[dict[str, Any]]:
+def parse_options(raw: str | list | None) -> list[dict[str, Any]]:
+    """兼容 DB 字符串与草稿里已反序列化的 list。"""
     if not raw:
+        return []
+    if isinstance(raw, list):
+        return [x for x in raw if isinstance(x, dict)]
+    if not isinstance(raw, (str, bytes, bytearray)):
         return []
     try:
         data = json.loads(raw)
