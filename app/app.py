@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
 from typing import Any
 from urllib import error as urlerror
 from urllib import request as urlrequest
+from urllib.parse import unquote
 
 import streamlit as st
 
@@ -17,11 +20,16 @@ ROOT = Path(__file__).resolve().parent.parent
 KAOGONG_DB = ROOT / "data" / "kaogong.db"
 SHENLUN_DB = ROOT / "data" / "shenlun.db"
 USER_DB = ROOT / "data" / "user.db"
+IMG_ROOT = ROOT / "data" / "90-图片"
 AGENT_BASE = "http://127.0.0.1:8787"
 
 DEFAULT_LIMIT = 10
 DEFAULT_EXAM_MINUTES = 120
 FOCUS_REGIONS = ("国考", "河南")
+IMG_SRC_RE = re.compile(
+    r"""<img\b[^>]*?\bsrc\s*=\s*['\"]([^'\"]+)['\"][^>]*>""",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +106,100 @@ def strip_html(text: str | None) -> str:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def resolve_image_path(src: str) -> Path | None:
+    """把题库里的 /90-图片/... 映射到本地 data/90-图片/..."""
+    if not src:
+        return None
+    raw = unquote(src.strip())
+    # 常见形式：/90-图片/题目图/xxx.webp 或 90-图片/...
+    marker = "90-图片/"
+    idx = raw.find(marker)
+    if idx >= 0:
+        rel = raw[idx + len(marker) :]
+    elif raw.startswith("/"):
+        rel = raw.lstrip("/")
+    else:
+        rel = raw
+    rel = rel.replace("\\", "/").lstrip("/")
+    if not rel or ".." in Path(rel).parts:
+        return None
+    path = (IMG_ROOT / rel).resolve()
+    try:
+        path.relative_to(IMG_ROOT.resolve())
+    except ValueError:
+        return None
+    if path.exists():
+        return path
+    missing = IMG_ROOT / "__missing__.webp"
+    return missing if missing.exists() else None
+
+
+def extract_image_paths(html: str | None) -> list[Path]:
+    if not html:
+        return []
+    paths: list[Path] = []
+    seen: set[str] = set()
+    for src in IMG_SRC_RE.findall(html):
+        p = resolve_image_path(src)
+        if not p:
+            continue
+        key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        paths.append(p)
+    return paths
+
+
+def html_to_streamlit_safe(html: str | None) -> str:
+    """保留图片，其余标签降级为纯文本，避免危险 HTML。"""
+    if not html:
+        return ""
+
+    def repl(match: re.Match[str]) -> str:
+        src = match.group(1)
+        path = resolve_image_path(src)
+        if not path:
+            return f"[图片缺失: {escape(src)}]"
+        # Streamlit 可直接显示本地路径图片；这里用 markdown 图片语法更稳
+        return f"\n\n![]({path.as_posix()})\n\n"
+
+    with_imgs = IMG_SRC_RE.sub(repl, html)
+    # 粗暴去标签，保留图片 markdown
+    text = re.sub(r"<(?!/?img\b)[^>]+>", "", with_imgs, flags=re.IGNORECASE)
+    text = text.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">")
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def render_rich_content(html_or_text: str | None, *, fallback_text: str | None = None) -> None:
+    """优先按含图 HTML 渲染；无图则退回纯文本。"""
+    raw = html_or_text or ""
+    imgs = extract_image_paths(raw)
+    if imgs or "<img" in raw.lower():
+        md = html_to_streamlit_safe(raw)
+        if md:
+            st.markdown(md)
+        else:
+            st.write(fallback_text or strip_html(raw) or "(内容为空)")
+        # 再保险：逐张 st.image，避免 markdown 某些环境下不加载本地图
+        for p in imgs:
+            try:
+                st.image(str(p), use_container_width=True)
+            except TypeError:
+                st.image(str(p), use_column_width=True)
+            except Exception as exc:  # noqa: BLE001
+                st.caption(f"图片加载失败：{p.name}（{exc}）")
+        return
+    text = fallback_text if fallback_text is not None else strip_html(raw)
+    st.write(text or "(内容为空)")
+
+
+def option_has_image(opt: dict[str, Any]) -> bool:
+    html = str(opt.get("html") or opt.get("label") or "")
+    return bool(extract_image_paths(html)) or "<img" in html.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -214,9 +316,16 @@ def fetch_paper_questions(paper: str, region: str, year: str) -> list[dict[str, 
 
 def _normalize_question(item: dict[str, Any]) -> dict[str, Any]:
     item["options"] = parse_options(item.get("options"))
+    item["stem_html"] = item.get("stem") or ""
+    item["material_html"] = item.get("material") or ""
+    item["analysis_html"] = item.get("analysis") or ""
     item["stem_text"] = strip_html(item.get("stem"))
     item["material_text"] = strip_html(item.get("material"))
     item["analysis_text"] = strip_html(item.get("analysis"))
+    item["stem_images"] = [str(p) for p in extract_image_paths(item.get("stem"))]
+    item["has_render_image"] = bool(item["stem_images"]) or any(
+        option_has_image(o) for o in item["options"]
+    )
     return item
 
 
@@ -313,11 +422,12 @@ def upsert_wrong_book(details: list[dict[str, Any]]) -> int:
                         d.get("qid"),
                         d.get("module"),
                         d.get("category"),
-                        d.get("stem"),
+                        # 优先存 HTML，便于错题本回看配图
+                        d.get("stem_html") or d.get("stem"),
                         opts,
                         d.get("correct_answer"),
                         d.get("user_answer"),
-                        d.get("analysis") or "",
+                        d.get("analysis_html") or d.get("analysis") or "",
                         1,
                         "",
                         "open",
@@ -399,6 +509,7 @@ def save_submission(
                 "question_id": qid,
                 "qid": q.get("qid"),
                 "stem": q.get("stem_text") or strip_html(q.get("stem")),
+                "stem_html": q.get("stem_html") or q.get("stem") or "",
                 "module": q.get("module"),
                 "category": q.get("category"),
                 "options": q.get("options") or [],
@@ -406,6 +517,7 @@ def save_submission(
                 "correct_answer": right or "(无答案)",
                 "is_correct": bool(is_correct),
                 "analysis": q.get("analysis_text") or strip_html(q.get("analysis")),
+                "analysis_html": q.get("analysis_html") or q.get("analysis") or "",
                 "time_spent_sec": int(time_spent.get(qid) or 0) or None,
             }
         )
@@ -663,8 +775,26 @@ def init_session() -> None:
 
 def option_label(opt: dict[str, Any]) -> str:
     key = opt.get("key") or "?"
+    if option_has_image(opt):
+        return f"{key}. （见图）"
     label = strip_html(opt.get("label") or opt.get("html") or "")
     return f"{key}. {label}" if label else str(key)
+
+
+def render_option_visual(opt: dict[str, Any]) -> None:
+    key = (opt.get("key") or "?").upper()
+    html = str(opt.get("html") or opt.get("label") or "")
+    imgs = extract_image_paths(html)
+    if not imgs:
+        return
+    st.caption(f"选项 {key} 配图")
+    for p in imgs:
+        try:
+            st.image(str(p), use_container_width=True)
+        except TypeError:
+            st.image(str(p), use_column_width=True)
+        except Exception as exc:  # noqa: BLE001
+            st.caption(f"选项图加载失败：{p.name}（{exc}）")
 
 
 def format_duration(sec: int | None) -> str:
@@ -878,10 +1008,13 @@ def render_quiz() -> None:
                 f"**第 {i} 题** · `{q.get('module')}` / `{q.get('category')}` · "
                 f"{q.get('region')} {q.get('year')} · id={qid}"
             )
-            if q.get("material_text"):
+            if q.get("material_html") or q.get("material_text"):
                 with st.expander("材料", expanded=False):
-                    st.write(q["material_text"])
-            st.write(q.get("stem_text") or "(题干为空)")
+                    render_rich_content(
+                        q.get("material_html"),
+                        fallback_text=q.get("material_text"),
+                    )
+            render_rich_content(q.get("stem_html"), fallback_text=q.get("stem_text"))
 
             opts = q.get("options") or []
             choices = [option_label(o) for o in opts]
@@ -889,6 +1022,13 @@ def render_quiz() -> None:
             if not choices:
                 st.warning("该题无选项数据，跳过。")
                 continue
+
+            # 选项含图时先展示配图，再给 radio 选字母
+            if any(option_has_image(o) for o in opts):
+                cols = st.columns(min(4, len(opts)) or 1)
+                for j, opt in enumerate(opts):
+                    with cols[j % len(cols)]:
+                        render_option_visual(opt)
 
             touch_question_timer(qid)
             radio_options = ["(请选择)"] + choices
@@ -943,10 +1083,11 @@ def render_quiz() -> None:
 
 
 def render_bank_analysis(detail: dict[str, Any]) -> bool:
-    analysis = (detail.get("analysis") or "").strip()
-    if analysis:
+    analysis_html = (detail.get("analysis_html") or detail.get("analysis") or "").strip()
+    analysis_text = (detail.get("analysis_text") or strip_html(analysis_html)).strip()
+    if analysis_html or analysis_text:
         st.markdown("**题库解析**")
-        st.write(analysis)
+        render_rich_content(analysis_html, fallback_text=analysis_text)
         return True
     st.caption("本题题库暂无解析。")
     return False
@@ -1022,9 +1163,10 @@ def render_result() -> None:
                     f"**错题 {i}** · `{d.get('module')}` / `{d.get('category')}` · "
                     f"question_id={d['question_id']}"
                 )
-                st.write(d.get("stem") or "")
+                render_rich_content(d.get("stem_html"), fallback_text=d.get("stem"))
                 for opt in d.get("options") or []:
                     st.write(f"- {option_label(opt)}")
+                    render_option_visual(opt)
                 st.error(f"你的答案：{d['user_answer']}")
                 st.info(f"正确答案：{d['correct_answer']}")
                 if d.get("time_spent_sec"):
@@ -1082,18 +1224,23 @@ def render_wrong_book() -> None:
                 f"**#{i}** `{row.get('module')}` / `{row.get('category')}` · "
                 f"id={qid} · 错 {row.get('wrong_count')} 次 · 状态={row.get('status')}"
             )
-            st.write(row.get("stem") or "")
+            # 错题本里 stem/analysis 可能是纯文本；若仍含 img 标签则走富渲染
+            render_rich_content(row.get("stem"), fallback_text=strip_html(row.get("stem")))
             try:
                 opts = json.loads(row.get("options_json") or "[]")
             except json.JSONDecodeError:
                 opts = []
             for opt in opts:
                 st.write(f"- {option_label(opt)}")
+                render_option_visual(opt)
             st.error(f"最近作答：{row.get('last_user_answer')}")
             st.info(f"正确答案：{row.get('correct_answer')}")
             if row.get("analysis"):
                 with st.expander("题库解析", expanded=False):
-                    st.write(row["analysis"])
+                    render_rich_content(
+                        row.get("analysis"),
+                        fallback_text=strip_html(row.get("analysis")),
+                    )
 
             note_key = f"wb_note_{qid}"
             note_val = st.text_area(
@@ -1364,6 +1511,11 @@ def main() -> None:
                 f"题库不存在：`{KAOGONG_DB}`\n\n请先运行：`bash scripts/prepare_kaogong.sh`"
             )
             st.stop()
+        if not IMG_ROOT.exists():
+            st.warning(
+                f"未找到配图目录 `{IMG_ROOT}`。含图题将无法显示图片。"
+                "请运行 `bash scripts/prepare_kaogong.sh` 同步 `90-图片/`。"
+            )
         render_xingce_module()
     else:
         render_shenlun_module()

@@ -7,6 +7,7 @@ data/kaogong.db
 data/shenlun.db
 data/user.db
 data/knowledge-index/
+data/90-图片/
 *.log
 .DS_Store
 node_modules/

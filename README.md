@@ -42,7 +42,8 @@ bash scripts/prepare_kaogong.sh
 2. 运行其 `assemble_db.py` 合并 `kaogong.db.part-*`
 3. 复制到 `data/kaogong.db`
 
-若本地已有 `data/kaogong.db`，脚本会跳过。
+若本地已有 `data/kaogong.db` 与 `data/90-图片/`，脚本会跳过对应步骤。
+配图目录约 199MB，**不会进入 git**；含图题依赖该目录才能正常显示。
 
 ### 2. 导入申论题库 `shenlun.db`
 
