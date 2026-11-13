@@ -159,9 +159,12 @@ def migrate(conn: sqlite3.Connection) -> None:
 
 def init_user_db(path: Path = USER_DB) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as conn:
-        migrate(conn)
-        conn.commit()
+    conn = sqlite3.connect(path)
+    try:
+        with conn:
+            migrate(conn)
+    finally:
+        conn.close()
     return path
 
 

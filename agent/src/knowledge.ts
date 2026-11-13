@@ -14,14 +14,31 @@ export async function getKnowledgeEngine(): Promise<KnowledgeEngine> {
       const engine = new KnowledgeEngine();
       await engine.initialize(KNOWLEDGE_DIR);
       return engine;
-    })();
+    })().catch((err) => {
+      // 初始化失败不永久缓存 rejected Promise，后续请求可重试。
+      enginePromise = null;
+      throw err;
+    });
   }
   return enginePromise;
 }
 
-export async function ensureKnowledgeIndexed(
+type IndexInfo = { kbName: string; chunkCount: number; reused: boolean };
+let indexPromise: Promise<IndexInfo> | null = null;
+
+export function ensureKnowledgeIndexed(
   onProgress?: (msg: string) => void
-): Promise<{ kbName: string; chunkCount: number; reused: boolean }> {
+): Promise<IndexInfo> {
+  // 冷启动并发请求共享一次索引任务；结束后清理，失败允许重试。
+  if (!indexPromise) {
+    indexPromise = indexKnowledge(onProgress).finally(() => {
+      indexPromise = null;
+    });
+  }
+  return indexPromise;
+}
+
+async function indexKnowledge(onProgress?: (msg: string) => void): Promise<IndexInfo> {
   const engine = await getKnowledgeEngine();
   const existing = engine.list().find((kb) => kb.name === KB_NAME);
   if (existing && (existing.chunk_count || 0) > 0) {
@@ -57,12 +74,15 @@ export async function searchKnowledge(
   limit = 5
 ): Promise<{ ok: true; hits: KnowledgeHit[] } | { ok: false; error: string }> {
   try {
+    const text = query.trim();
+    if (!text) return { ok: true, hits: [] };
+    const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(10, Math.floor(limit))) : 5;
     const engine = await getKnowledgeEngine();
     await ensureKnowledgeIndexed();
-    const resp = await engine.search(query, {
+    const resp = await engine.search(text, {
       mode: "hybrid",
       profile: "docs",
-      limit,
+      limit: safeLimit,
       kb_id: KB_NAME,
     });
     const hits: KnowledgeHit[] = (resp.results || []).map((r) => ({

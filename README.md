@@ -6,6 +6,8 @@
 
 当前能力：行测练习/套卷计时、题库解析优先、错题本笔记、申论开卷练习、知识库检索、学习规划与对话辅导。
 
+项目开发过程、文件改动、环境、功能效果及性能验收见 [最终验收报告](./FINAL_ACCEPTANCE_REPORT.md)。性能分析、优化前后实测、已知限制与复现命令见 [性能报告](./PERFORMANCE_REPORT.md)。随机抽题使用 `MATERIALIZED` CTE，需要 Python SQLite ≥ 3.35。
+
 ## 目录结构
 
 ```text

@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { searchKnowledge } from "./knowledge.ts";
@@ -13,6 +14,24 @@ type Option = {
 
 function openReadonly(dbPath: string): DatabaseSync {
   return new DatabaseSync(dbPath, { readOnly: true });
+}
+
+// 可注入路径用于隔离测试；生产环境始终沿用默认题库和用户库。
+export type DatabasePaths = { user: string; questions: string };
+const DEFAULT_DATABASES: DatabasePaths = { user: USER_DB, questions: KAOGONG_DB };
+
+function openUserWithQuestions(paths: DatabasePaths): DatabaseSync {
+  const db = openReadonly(paths.user);
+  try {
+    const uri = pathToFileURL(paths.questions);
+    uri.searchParams.set("mode", "ro");
+    db.prepare("ATTACH DATABASE ? AS question_bank").run(uri.href);
+    db.exec("PRAGMA query_only = ON");
+    return db;
+  } catch (err) {
+    db.close();
+    throw err;
+  }
 }
 
 function stripHtml(text: string | null | undefined): string {
@@ -104,41 +123,34 @@ export function getQuestionById(questionId: number): QuestionRecord | null {
 }
 
 export function getSubmissionAnswersById(
-  submissionId: number
+  submissionId: number,
+  paths: DatabasePaths = DEFAULT_DATABASES
 ): SubmissionAnswerRecord[] {
-  const userDb = openReadonly(USER_DB);
-  let answers: Array<{
-    question_id: number;
-    user_answer: string;
-    is_correct: number;
-  }> = [];
+  const userDb = openUserWithQuestions(paths);
   try {
-    answers = userDb
-      .prepare(
-        `SELECT question_id, user_answer, is_correct
-         FROM answers WHERE submission_id = ? ORDER BY id`
-      )
-      .all(submissionId) as Array<{
-      question_id: number;
-      user_answer: string;
-      is_correct: number;
+    const rows = userDb.prepare(
+      `SELECT a.question_id, a.user_answer, a.is_correct,
+              q.id AS matched_id, q.stem, q.answer, q.module, q.category
+       FROM answers a
+       LEFT JOIN question_bank.questions q ON q.id = a.question_id
+       WHERE a.submission_id = ? ORDER BY a.id`
+    ).all(submissionId) as Array<{
+      question_id: number; user_answer: string; is_correct: number;
+      matched_id: number | null; stem: string | null; answer: string | null;
+      module: string | null; category: string | null;
     }>;
-  } finally {
-    userDb.close();
-  }
-
-  return answers.map((a) => {
-    const q = getQuestionById(a.question_id);
-    return {
+    return rows.map((a) => ({
       question_id: a.question_id,
       user_answer: a.user_answer,
       is_correct: Boolean(a.is_correct),
-      stem: q?.stem,
-      correct_answer: q?.answer,
-      module: q?.module,
-      category: q?.category,
-    };
-  });
+      stem: a.matched_id == null ? undefined : stripHtml(a.stem),
+      correct_answer: a.matched_id == null ? undefined : String(a.answer || "").toUpperCase(),
+      module: a.matched_id == null ? undefined : a.module || "",
+      category: a.matched_id == null ? undefined : a.category || "",
+    }));
+  } finally {
+    userDb.close();
+  }
 }
 
 function textResult(payload: unknown) {
@@ -262,9 +274,9 @@ export function getRecentChat(limit = 12) {
   }
 }
 
-export function getUserStats(): UserStats {
-  const userDb = openReadonly(USER_DB);
-  let answerRows: Array<{ question_id: number; is_correct: number }> = [];
+export function getUserStats(paths: DatabasePaths = DEFAULT_DATABASES): UserStats {
+  const userDb = openUserWithQuestions(paths);
+  let moduleRows: Array<{ module: string; total: number; correct: number }> = [];
   let submissions = 0;
   let examSubmissions = 0;
   let practiceSubmissions = 0;
@@ -272,9 +284,15 @@ export function getUserStats(): UserStats {
   let recentExams: UserStats["recent_exams"] = [];
   let profile: UserStats["learner_profile"] = null;
   try {
-    answerRows = userDb
-      .prepare(`SELECT question_id, is_correct FROM answers`)
-      .all() as Array<{ question_id: number; is_correct: number }>;
+    moduleRows = userDb.prepare(
+      `SELECT COALESCE(NULLIF(q.module, ''), '未知模块') AS module,
+              COUNT(*) AS total,
+              SUM(CASE WHEN a.is_correct != 0 THEN 1 ELSE 0 END) AS correct
+       FROM answers a
+       LEFT JOIN question_bank.questions q ON q.id = a.question_id
+       GROUP BY COALESCE(NULLIF(q.module, ''), '未知模块')
+       ORDER BY MIN(a.id)`
+    ).all() as typeof moduleRows;
     submissions = Number(
       (
         userDb.prepare(`SELECT COUNT(*) AS n FROM submissions`).get() as {
@@ -328,23 +346,13 @@ export function getUserStats(): UserStats {
     userDb.close();
   }
 
-  const totalAnswered = answerRows.length;
-  const totalCorrect = answerRows.filter((a) => a.is_correct).length;
+  const totalAnswered = moduleRows.reduce((sum, row) => sum + row.total, 0);
+  const totalCorrect = moduleRows.reduce((sum, row) => sum + row.correct, 0);
   const wrongCount = totalAnswered - totalCorrect;
 
-  const byModule = new Map<string, { total: number; correct: number }>();
-  for (const a of answerRows) {
-    const q = getQuestionById(a.question_id);
-    const module = q?.module || "未知模块";
-    const cur = byModule.get(module) || { total: 0, correct: 0 };
-    cur.total += 1;
-    if (a.is_correct) cur.correct += 1;
-    byModule.set(module, cur);
-  }
-
-  const modules: ModuleStat[] = [...byModule.entries()]
-    .map(([module, v]) => ({
-      module,
+  const modules: ModuleStat[] = moduleRows
+    .map((v) => ({
+      module: v.module,
       total: v.total,
       correct: v.correct,
       wrong: v.total - v.correct,

@@ -10,7 +10,9 @@ import {
   customTools,
   getSubmissionAnswersById,
   getUserStats,
+  getRecentChat,
 } from "./tools.ts";
+import { searchKnowledge } from "./knowledge.ts";
 import { ROOT, SYSTEM_PROMPT_PATH } from "./paths.ts";
 
 export type ExplanationItem = {
@@ -32,6 +34,10 @@ async function createKaogongSession(options?: {
     agentDir,
     systemPromptOverride: () => systemPrompt,
     appendSystemPromptOverride: () => [],
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
   });
   await loader.reload();
 
@@ -148,17 +154,22 @@ export async function explainOne(
 export async function makeStudyPlan(days: number): Promise<string> {
   const safeDays = Math.max(1, Math.min(180, Math.floor(days || 7)));
   const stats = getUserStats();
-  const session = await createKaogongSession();
+  // 确定性预取：统计/档案/对话直接读库，检索与会话初始化并行，
+  // 避免模型用三轮网络往返调度已知的读取步骤。
+  const memory = { profile: stats.learner_profile, recent_chat: getRecentChat(8) };
+  const [knowledge, session] = await Promise.all([
+    searchKnowledge(`${stats.weakest_modules.join(" ")} ${stats.learner_profile?.target_exam || "国考 河南"} 学习计划 备考方法`, 3),
+    createKaogongSession(),
+  ]);
   try {
     const prompt = `请为用户生成一份 ${safeDays} 天的考公学习规划（行测为主，可兼顾申论方法）。
 
-硬性步骤：
-1. 先调用 get_user_stats() 获取真实统计（即使下面已给出摘要也要调用核对）；
-2. 再调用 get_learner_memory() 读取学习者档案与近期对话；
-3. 再调用 search_knowledge，至少检索一次与弱项/目标考试相关的备考建议；
-4. 最后输出按天/按周的计划正文。
+服务端已执行本轮可信预取（满足 system 中的数据读取与检索要求），直接据此生成规划；仅在信息不足时补充工具查询。
+学习者档案与近期对话：${JSON.stringify(memory)}
+知识库检索结果：${JSON.stringify(knowledge)}
+真实统计：${JSON.stringify(stats)}
 
-已知统计摘要（仍须用工具核对）：
+已知统计摘要：
 - 总做题 ${stats.total_answered}，正确率 ${stats.accuracy}% ，错题 ${stats.wrong_count}
 - 练习交卷 ${stats.practice_submissions}，套卷交卷 ${stats.exam_submissions}，套卷平均用时 ${stats.avg_exam_duration_sec ?? "未知"} 秒
 - 弱项模块：${stats.weakest_modules.join("、") || "暂无"}

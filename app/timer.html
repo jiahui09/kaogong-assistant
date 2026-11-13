@@ -1,0 +1,40 @@
+<!doctype html><html><body><script>
+(() => {
+  const config = __CLOCK_CONFIG__;
+  const doc = parent.document;
+  const format = seconds => {
+    seconds = Math.max(0, Math.floor(seconds));
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  };
+  const setText = (element, text) => {
+    if (element && element.textContent !== text) element.textContent = text;
+  };
+  const update = () => {
+    if (!frameElement?.isConnected) return;
+    const clock = doc.querySelector('.exam-header-clock');
+    if (!clock) return;
+    const elapsed = Math.max(0, Math.floor((Date.now() - config.started) / 1000));
+    setText(clock.querySelector('[data-clock-elapsed]'), format(elapsed));
+    const remaining = clock.querySelector('[data-clock-remaining]');
+    if (remaining && config.exam) {
+      const seconds = config.limit - elapsed;
+      setText(remaining.querySelector('b'), seconds < 0 ? '已超时' : format(seconds));
+      remaining.classList.toggle('clock-urgent', seconds <= 300);
+    }
+    // 只统计题目 radio，不包含侧边栏/筛选器；使用 checked property 读取即时选择。
+    const groups = [...doc.querySelectorAll('[role="radiogroup"]')]
+      .filter(group => /^选项##\d+$/.test(group.getAttribute('aria-label') || ''));
+    if (groups.length !== config.total) return;
+    const answered = groups.filter(group => {
+      const input = group.querySelector('input:checked');
+      return input && input.value !== '0';
+    }).length;
+    setText(clock.querySelector('[data-clock-progress]'), `${answered}/${config.total}`);
+    setText(doc.querySelector('[data-answer-progress]'),
+      `已作答 ${answered} / ${config.total}（草稿自动保存）`);
+  };
+  update();
+  const interval = setInterval(update, 250);
+  addEventListener('pagehide', () => clearInterval(interval), {once: true});
+})();
+</script></body></html>

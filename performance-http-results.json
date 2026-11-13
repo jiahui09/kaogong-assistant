@@ -1,0 +1,52 @@
+{
+  "baseline_commit": "fbb39cb6e7df46263fdafa09b23710649aae467d",
+  "method": "真实 HTTP、本机回环、独立进程；20次串行stats，8线程混合40次stats/health；不调用模型与知识库；RSS为请求完成后的单次进程快照",
+  "before": {
+    "startup_to_health_ms": 918.9766950003104,
+    "serial_stats": {
+      "median_ms": 102.70549800043227,
+      "p95_ms": 111.90108500159113,
+      "samples": 20
+    },
+    "mixed_8_clients": {
+      "stats": {
+        "median_ms": 416.5674815012608,
+        "p95_ms": 523.7386259977939,
+        "samples": 20
+      },
+      "health": {
+        "median_ms": 415.3584055020474,
+        "p95_ms": 429.6023429997149,
+        "samples": 20
+      },
+      "requests_per_sec": 19.02213401675357,
+      "requests": 40
+    },
+    "rss_kib_after_requests": 229260,
+    "total_answered": 891
+  },
+  "after": {
+    "startup_to_health_ms": 912.34906000318,
+    "serial_stats": {
+      "median_ms": 1.412335997883929,
+      "p95_ms": 1.7556129969307221,
+      "samples": 20
+    },
+    "mixed_8_clients": {
+      "stats": {
+        "median_ms": 5.219229999056552,
+        "p95_ms": 5.811749004351441,
+        "samples": 20
+      },
+      "health": {
+        "median_ms": 5.161201996088494,
+        "p95_ms": 5.795336997834966,
+        "samples": 20
+      },
+      "requests_per_sec": 1438.2705600374068,
+      "requests": 40
+    },
+    "rss_kib_after_requests": 201788,
+    "total_answered": 891
+  }
+}

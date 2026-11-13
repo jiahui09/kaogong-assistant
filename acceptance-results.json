@@ -1,0 +1,124 @@
+{
+  "accepted_at": "2026-11-13",
+  "scope": "本地单用户功能、交互与性能优化验收；真实外部模型端到端未复验",
+  "baseline_commit": "fbb39cb6e7df46263fdafa09b23710649aae467d",
+  "environment": {
+    "os": "Linux-7.2.15-arch1-1-x86_64-with-glibc2.44",
+    "python": "3.14.10",
+    "sqlite": "3.54.1",
+    "streamlit": "1.40.2",
+    "node": "v26.13.1"
+  },
+  "checks": {
+    "python_data": {
+      "passed": 8
+    },
+    "streamlit_ui": {
+      "passed": 3
+    },
+    "node": {
+      "passed": 4
+    },
+    "typescript_typecheck": "passed",
+    "python_compile": "passed",
+    "git_diff_check": "passed",
+    "agent_health": "passed",
+    "streamlit_health": "passed"
+  },
+  "websocket": {
+    "baseline_commit": "fbb39cb6e7df46263fdafa09b23710649aae467d",
+    "method": "真实Streamlit进程和WebSocket/protobuf作答事件，消息无浏览器绘制；每次事件均核对隔离草稿，最后真实交卷核对答案；未模拟计时器每秒自动调度，计时片段在最后单独请求",
+    "before": {
+      "initial_render": {
+        "ms": 620.8384910059976,
+        "bytes": 367774,
+        "deltas": 1387,
+        "radios": 139
+      },
+      "questions": 135,
+      "answer": {
+        "median_ms": 463.2478130006348,
+        "p95_ms": 495.4660739967949,
+        "median_bytes": 367670,
+        "median_deltas": 1386,
+        "median_radios": 139,
+        "samples": 9
+      },
+      "fragment_enabled": false,
+      "timer_runs": [
+        {
+          "ms": 67.4124369979836,
+          "bytes": 1055,
+          "deltas": 2,
+          "radios": 0
+        }
+      ],
+      "draft_persistence_checked": true,
+      "submission_checked": true,
+      "clear_answers_checked": true,
+      "star_toggle_checked": true
+    },
+    "after": {
+      "initial_render": {
+        "ms": 740.6467530017835,
+        "bytes": 438865,
+        "deltas": 1552,
+        "radios": 137
+      },
+      "questions": 135,
+      "answer": {
+        "median_ms": 45.69606500444934,
+        "p95_ms": 82.7343309938442,
+        "median_bytes": 2226,
+        "median_deltas": 10,
+        "median_radios": 1,
+        "samples": 9
+      },
+      "fragment_enabled": true,
+      "timer_runs": [],
+      "draft_persistence_checked": true,
+      "submission_checked": true,
+      "clear_answers_checked": true,
+      "star_toggle_checked": true
+    }
+  },
+  "browser": {
+    "idle": {
+      "frames": 0,
+      "clockReplacements": 0
+    },
+    "switch": {
+      "ms": [
+        469,
+        372,
+        374,
+        351,
+        369,
+        342,
+        365
+      ],
+      "frames": 636,
+      "bytes": 118668
+    },
+    "star": {
+      "ms": [
+        349,
+        358,
+        362,
+        355
+      ],
+      "frames": 364,
+      "bytes": 67848
+    },
+    "progressChecked": true,
+    "planStartMs": 690,
+    "switchWhilePlanMs": 365,
+    "asyncPlanCompleted": true
+  },
+  "measurement_limits": [
+    "WebSocket不包含浏览器绘制；浏览器结果另列",
+    "AI响应使用6秒模拟，仅验证非阻塞与完成处理",
+    "数据库/HTTP对比数据使用前轮performance-results.json与performance-http-results.json",
+    "所有验收写入均使用隔离副本，未改真实学习记录"
+  ]
+}

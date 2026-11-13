@@ -14,3 +14,6 @@ data/90-*
 node_modules/
 agent/dist/
 agent/node_modules/
+# 性能测试运行时的用户库副本，异常中断时也不可提交
+agent/.performance-*/
+agent/.performance-http-*/

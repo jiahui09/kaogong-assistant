@@ -7,6 +7,7 @@
     "dev": "tsx src/server.ts",
     "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/performance.test.ts",
     "verify": "tsx src/verify_stage1.ts",
     "verify:stage2": "tsx src/verify_stage2.ts",
     "verify:stage3": "tsx src/verify_stage3.ts",

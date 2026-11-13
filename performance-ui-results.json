@@ -1,0 +1,22 @@
+{
+  "baseline_commit": "fbb39cb6e7df46263fdafa09b23710649aae467d",
+  "method": "Streamlit AppTest Python端整页执行；从真实用户库的隔离副本恢复草稿；单独记录首次执行及后续rerun；不含真实浏览器绘制、网络传输、图片下载与模型",
+  "before": {
+    "first_ms": 509.1094180024811,
+    "rerun_median_ms": 413.5748100015917,
+    "rerun_p95_ms": 437.43125299806707,
+    "samples": 7,
+    "restored_questions": 135,
+    "switch_to_shenlun_ms": 77.3040950007271,
+    "exceptions": 0
+  },
+  "after": {
+    "first_ms": 396.63654399919324,
+    "rerun_median_ms": 445.5554069936625,
+    "rerun_p95_ms": 510.45705800061114,
+    "samples": 7,
+    "restored_questions": 135,
+    "switch_to_shenlun_ms": 95.37329599697841,
+    "exceptions": 0
+  }
+}

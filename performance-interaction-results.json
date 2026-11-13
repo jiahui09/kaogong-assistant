@@ -1,0 +1,70 @@
+{
+  "baseline_commit": "fbb39cb6e7df46263fdafa09b23710649aae467d",
+  "method": "真实Streamlit进程和WebSocket/protobuf作答事件，消息无浏览器绘制；每次事件均核对隔离草稿，最后真实交卷核对答案；未模拟计时器每秒自动调度，计时片段在最后单独请求",
+  "before": {
+    "initial_render": {
+      "ms": 715.5996820001747,
+      "bytes": 367770,
+      "deltas": 1387,
+      "radios": 139
+    },
+    "questions": 135,
+    "answer": {
+      "median_ms": 463.4564330044668,
+      "p95_ms": 511.48906799789984,
+      "median_bytes": 367666,
+      "median_deltas": 1386,
+      "median_radios": 139,
+      "samples": 9
+    },
+    "fragment_enabled": false,
+    "timer_runs": [
+      {
+        "ms": 65.49470000027213,
+        "bytes": 1051,
+        "deltas": 2,
+        "radios": 0
+      }
+    ],
+    "draft_persistence_checked": true,
+    "submission_checked": true,
+    "clear_answers_checked": true,
+    "star_toggle_checked": true
+  },
+  "after": {
+    "initial_render": {
+      "ms": 692.6812820020132,
+      "bytes": 429418,
+      "deltas": 1523,
+      "radios": 139
+    },
+    "questions": 135,
+    "answer": {
+      "median_ms": 45.38587499700952,
+      "p95_ms": 83.18376100214664,
+      "median_bytes": 2226,
+      "median_deltas": 10,
+      "median_radios": 1,
+      "samples": 9
+    },
+    "fragment_enabled": true,
+    "timer_runs": [
+      {
+        "ms": 69.68852299905848,
+        "bytes": 1047,
+        "deltas": 2,
+        "radios": 0
+      },
+      {
+        "ms": 67.53801200102316,
+        "bytes": 831,
+        "deltas": 2,
+        "radios": 0
+      }
+    ],
+    "draft_persistence_checked": true,
+    "submission_checked": true,
+    "clear_answers_checked": true,
+    "star_toggle_checked": true
+  }
+}
