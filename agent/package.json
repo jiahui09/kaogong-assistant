@@ -1,0 +1,42 @@
+{
+  "name": "kaogong-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "verify": "tsx src/verify_stage1.ts",
+    "verify:stage2": "tsx src/verify_stage2.ts",
+    "verify:stage3": "tsx src/verify_stage3.ts",
+    "index:knowledge": "tsx src/index_knowledge.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "pi-knowledge": "^0.14.0",
+    "typebox": "1.3.27"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "onnxruntime-node@1.21.0": true,
+    "sharp@0.34.5": true,
+    "tree-sitter@0.21.1": true,
+    "tree-sitter-bash@0.21.0": true,
+    "tree-sitter-c@0.21.4": true,
+    "tree-sitter-cpp@0.23.2": true,
+    "tree-sitter-go@0.21.2": true,
+    "tree-sitter-java@0.23.5": true,
+    "tree-sitter-javascript@0.23.1": true,
+    "tree-sitter-python@0.21.0": true,
+    "tree-sitter-qmljs@0.3.1": true,
+    "tree-sitter-rust@0.21.0": true,
+    "tree-sitter-typescript@0.23.2": true
+  }
+}

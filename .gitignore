@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.streamlit/secrets.toml
+data/kaogong.db
+data/shenlun.db
+data/user.db
+data/knowledge-index/
+*.log
+.DS_Store
+node_modules/
+agent/dist/
+agent/node_modules/
