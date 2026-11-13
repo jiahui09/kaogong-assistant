@@ -557,6 +557,38 @@ def list_wrong_book(
     return [dict(r) for r in rows]
 
 
+def list_wrong_question_index(
+    paper: str,
+    status: str | None = "open",
+) -> list[dict[str, Any]]:
+    """二级目录：仅取题号摘要，不取题干/选项，保证侧栏轻量。"""
+    clauses = ["COALESCE(paper, '(练习/未标注)') = ?"]
+    params: list[Any] = [paper]
+    if status and status != "(全部)":
+        clauses.append("status = ?")
+        params.append(status)
+    sql = f"""
+        SELECT question_id, module, category, status, wrong_count, starred,
+               last_user_answer, correct_answer, last_wrong_at
+        FROM wrong_book
+        WHERE {' AND '.join(clauses)}
+        ORDER BY last_wrong_at DESC, id DESC
+    """
+    with open_user() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_wrong_question(question_id: int) -> dict[str, Any] | None:
+    """按需取单题详情。"""
+    with open_user() as conn:
+        row = conn.execute(
+            "SELECT * FROM wrong_book WHERE question_id=?",
+            (int(question_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def wrong_book_paper_catalog() -> list[dict[str, Any]]:
     """错题目录：按试卷汇总。"""
     sql = """
@@ -1254,7 +1286,11 @@ def on_answer_change(qid: int) -> None:
 
 @st.fragment(run_every=1)
 def render_sticky_header_timer() -> None:
-    """页眉常驻迷你计时条：固定顶部、占高很小，仅刷新本 fragment。"""
+    """顶部常驻迷你计时条。
+
+    说明：Streamlit 对 position:fixed 支持不稳定，这里用 fragment + 紧凑 caption，
+    放在做题区最上方，滚动时仍可通过页面顶部区域持续看到，且几乎不占高度。
+    """
     if not st.session_state.get("questions") or not st.session_state.get("exam_started_at"):
         return
     started = float(st.session_state.exam_started_at)
@@ -1270,22 +1306,15 @@ def render_sticky_header_timer() -> None:
     else:
         remain_txt = "-"
         mode_txt = "练习"
+    # 单行紧凑条，不用 metric，避免占高
     st.markdown(
-        f"""
-<div style="
-  position: fixed; top: 0; left: 0; right: 0; z-index: 10000;
-  height: 34px; display:flex; align-items:center; gap:14px;
-  padding: 0 14px; font-size: 12.5px; letter-spacing: .2px;
-  background: rgba(16,20,30,.92); color: #f3f6ff;
-  border-bottom: 1px solid rgba(255,255,255,.12);
-  backdrop-filter: blur(8px);">
-  <span style="opacity:.8">⏱ {mode_txt}</span>
-  <span><b>已用</b> {format_duration(elapsed)}</span>
-  <span><b>剩余</b> {remain_txt}</span>
-  <span><b>进度</b> {answered}/{total}</span>
-</div>
-<div style="height:38px"></div>
-""",
+        f"<div style='padding:4px 10px;border:1px solid rgba(120,120,120,.35);"
+        f"border-radius:8px;background:rgba(40,44,56,.08);font-size:13px;'>"
+        f"⏱ <b>{mode_txt}</b>"
+        f"&nbsp;&nbsp;已用 <b>{format_duration(elapsed)}</b>"
+        f"&nbsp;&nbsp;剩余 <b>{remain_txt}</b>"
+        f"&nbsp;&nbsp;进度 <b>{answered}/{total}</b>"
+        f"</div>",
         unsafe_allow_html=True,
     )
 
@@ -1576,125 +1605,159 @@ def render_result() -> None:
 
 def render_wrong_book() -> None:
     st.subheader("错题本")
-    st.caption("先看试卷目录，再展开某套卷的错题详情，避免一次渲染过多导致卡顿。")
+    st.caption("右侧目录：一级套卷 / 二级题号。仅在选中题号后加载详情，保证流畅。")
 
     catalog = wrong_book_paper_catalog()
     if not catalog:
         st.info("暂无错题。交卷后会按试卷自动归档。")
         return
 
-    # 目录视图（轻量）
-    st.markdown("### 错题目录（按试卷）")
-    for i, c in enumerate(catalog):
-        label = f"{c.get('region') or ''} {c.get('year') or ''} · {c['paper']}".strip()
-        cols = st.columns([6, 1.2, 1.2, 1.6])
-        cols[0].write(f"**{label}**")
-        cols[1].write(f"错题 {c['wrong_n']}")
-        cols[2].write(f"未掌握 {c['open_n']}")
-        if cols[3].button("查看", key=f"wb_open_paper_{i}", use_container_width=True):
-            st.session_state.wb_selected_paper = c["paper"]
-            st.session_state.wb_page = 0
+    left, right = st.columns([3.2, 1.35], gap="medium")
 
-    selected = st.session_state.get("wb_selected_paper")
-    if not selected:
-        st.info("点击某套卷的「查看」后，再加载该卷错题详情。")
-        return
-
-    st.markdown("---")
-    st.markdown(f"### 当前试卷：`{selected}`")
-    b1, b2, b3 = st.columns([1, 1, 2])
-    if b1.button("返回目录", use_container_width=True):
-        st.session_state.wb_selected_paper = None
-        st.rerun()
-    status = b2.selectbox("状态", ["open", "mastered", "(全部)"], index=0, key="wb_status_detail")
-
-    rows = list_wrong_book(status=status, module=None, paper=selected)
-    total = len(rows)
-    page_size = 8
-    page = int(st.session_state.get("wb_page") or 0)
-    max_page = max(0, (total - 1) // page_size)
-    page = max(0, min(page, max_page))
-    st.session_state.wb_page = page
-    start = page * page_size
-    end = start + page_size
-    page_rows = rows[start:end]
-    st.caption(f"共 {total} 条，当前第 {page+1}/{max_page+1} 页（每页 {page_size} 条）")
-
-    nav1, nav2, nav3 = st.columns(3)
-    if nav1.button("上一页", disabled=page <= 0, use_container_width=True):
-        st.session_state.wb_page = page - 1
-        st.rerun()
-    if nav2.button("下一页", disabled=page >= max_page, use_container_width=True):
-        st.session_state.wb_page = page + 1
-        st.rerun()
-    nav3.write("")
-
-    starred_ids = load_starred_ids()
-    for i, row in enumerate(page_rows, start=start + 1):
-        qid = int(row["question_id"])
-        star = "⭐" if (qid in starred_ids or int(row.get("starred") or 0) == 1) else ""
-        # 默认折叠详情，先看摘要，点开再渲染图片/解析
-        title = (
-            f"#{i} {star} `{row.get('module')}` / `{row.get('category')}` · "
-            f"错{row.get('wrong_count')}次 · {row.get('status')}"
+    with right:
+        st.markdown("#### 目录")
+        status = st.selectbox(
+            "状态",
+            ["open", "mastered", "(全部)"],
+            index=0,
+            key="wb_status_side",
         )
-        with st.expander(title, expanded=False):
-            st.caption(
-                f"试卷：{row.get('region') or ''} {row.get('year') or ''} · "
-                f"{row.get('paper') or '(练习/未标注)'} · submission={row.get('submission_id')}"
-            )
-            # 摘要文本先出，图片按需
-            stem_text = strip_html(row.get("stem"))
-            st.write((stem_text[:180] + ("…" if len(stem_text) > 180 else "")) or "(无题干)")
-            if st.checkbox("显示完整题干/配图", key=f"wb_full_{qid}"):
-                render_rich_content(row.get("stem"), fallback_text=stem_text)
-                try:
-                    opts = json.loads(row.get("options_json") or "[]")
-                except json.JSONDecodeError:
-                    opts = []
-                for opt in opts:
-                    st.write(f"- {option_label(opt)}")
-                    render_option_visual(opt)
-            st.error(f"最近作答：{row.get('last_user_answer')}")
-            st.info(f"正确答案：{row.get('correct_answer')}")
+        paper_labels: list[str] = []
+        paper_map: dict[str, dict[str, Any]] = {}
+        for c in catalog:
+            label = (
+                f"{c.get('region') or ''} {c.get('year') or ''} · {c['paper']} "
+                f"（未掌握{c['open_n']}/共{c['wrong_n']}）"
+            ).strip()
+            paper_labels.append(label)
+            paper_map[label] = c
 
-            if row.get("analysis") and st.checkbox("显示题库解析", key=f"wb_ana_{qid}"):
-                render_rich_content(
-                    row.get("analysis"),
-                    fallback_text=strip_html(row.get("analysis")),
+        current_paper = st.session_state.get("wb_selected_paper")
+        default_idx = 0
+        for i, c in enumerate(catalog):
+            if c["paper"] == current_paper:
+                default_idx = i
+                break
+        selected_label = st.radio(
+            "一级：套卷",
+            options=paper_labels,
+            index=default_idx,
+            key="wb_paper_radio",
+        )
+        selected_paper = paper_map[selected_label]["paper"]
+        if selected_paper != current_paper:
+            st.session_state.wb_selected_paper = selected_paper
+            st.session_state.wb_selected_qid = None
+
+        index_rows = list_wrong_question_index(selected_paper, status=status)
+        if not index_rows:
+            st.info("该套卷在当前状态下无错题。")
+        else:
+            qid_options = []
+            for i, r in enumerate(index_rows):
+                star = "⭐" if int(r.get("starred") or 0) == 1 else ""
+                qid_options.append(
+                    f"#{i+1} · id={r['question_id']} · "
+                    f"{r.get('module') or ''}/{r.get('category') or ''} · "
+                    f"错{r.get('wrong_count')}{star}"
                 )
-
-            note_val = st.text_area(
-                "我的笔记",
-                value=row.get("note") or "",
-                key=f"wb_note_{qid}",
-                height=80,
+            selected_qid = st.session_state.get("wb_selected_qid")
+            default_q = 0
+            if selected_qid is not None:
+                for i, r in enumerate(index_rows):
+                    if int(r["question_id"]) == int(selected_qid):
+                        default_q = i
+                        break
+            choice = st.radio(
+                "二级：题号",
+                options=qid_options,
+                index=default_q,
+                key=f"wb_qid_radio_{selected_paper}_{status}",
             )
-            b1, b2, b3, b4 = st.columns(4)
-            if b1.button("保存笔记", key=f"wb_save_{qid}"):
-                update_wrong_note(qid, note_val)
-                st.success("笔记已保存")
-            if b2.button("已掌握", key=f"wb_ok_{qid}"):
-                update_wrong_status(qid, "mastered")
-                st.rerun()
-            if b3.button("重开", key=f"wb_open_{qid}"):
-                update_wrong_status(qid, "open")
-                st.rerun()
-            star_label = "取消重点" if qid in starred_ids else "标为重点"
-            if b4.button(star_label, key=f"wb_star_{qid}"):
-                set_question_starred(qid, qid not in starred_ids, note=note_val)
-                st.rerun()
+            qid = int(choice.split("id=")[1].split(" ")[0])
+            st.session_state.wb_selected_qid = qid
+            st.caption(f"目录 {len(index_rows)} 题（不含题干，轻量查询）")
 
-            if st.checkbox("需要 AI 解析", key=f"wb_ai_toggle_{qid}"):
-                detail = {
-                    "question_id": qid,
-                    "user_answer": row.get("last_user_answer") or "",
-                    "analysis": row.get("analysis") or "",
-                }
-                has_bank = bool((row.get("analysis") or "").strip())
-                render_on_demand_ai(
-                    detail, button_prefix=f"wb_{qid}", force_visible=not has_bank
-                )
+    with left:
+        qid = st.session_state.get("wb_selected_qid")
+        if not qid:
+            st.info("请在右侧选择套卷和题号。")
+            return
+        row = get_wrong_question(int(qid))
+        if not row:
+            st.warning("题目不存在或已删除。")
+            return
+
+        starred_ids = load_starred_ids()
+        star = "⭐" if (int(qid) in starred_ids or int(row.get("starred") or 0) == 1) else ""
+        st.markdown(
+            f"### {star} 错题详情 · id={qid}\n"
+            f"`{row.get('module')}` / `{row.get('category')}` · 错 {row.get('wrong_count')} 次 · {row.get('status')}"
+        )
+        st.caption(
+            f"试卷：{row.get('region') or ''} {row.get('year') or ''} · "
+            f"{row.get('paper') or '(练习/未标注)'} · submission={row.get('submission_id')}"
+        )
+
+        stem_text = strip_html(row.get("stem"))
+        st.write(stem_text or "(无题干)")
+        if st.checkbox("显示配图/选项图", key=f"wb_full_{qid}"):
+            render_rich_content(row.get("stem"), fallback_text=stem_text)
+            try:
+                opts = json.loads(row.get("options_json") or "[]")
+            except json.JSONDecodeError:
+                opts = []
+            for opt in opts:
+                st.write(f"- {option_label(opt)}")
+                render_option_visual(opt)
+        else:
+            try:
+                opts = json.loads(row.get("options_json") or "[]")
+            except json.JSONDecodeError:
+                opts = []
+            for opt in opts:
+                st.write(f"- {option_label(opt)}")
+
+        st.error(f"最近作答：{row.get('last_user_answer')}")
+        st.info(f"正确答案：{row.get('correct_answer')}")
+
+        if row.get("analysis") and st.checkbox("显示题库解析", key=f"wb_ana_{qid}"):
+            render_rich_content(
+                row.get("analysis"),
+                fallback_text=strip_html(row.get("analysis")),
+            )
+
+        note_val = st.text_area(
+            "我的笔记",
+            value=row.get("note") or "",
+            key=f"wb_note_{qid}",
+            height=90,
+        )
+        b1, b2, b3, b4 = st.columns(4)
+        if b1.button("保存笔记", key=f"wb_save_{qid}"):
+            update_wrong_note(int(qid), note_val)
+            st.success("笔记已保存")
+        if b2.button("已掌握", key=f"wb_ok_{qid}"):
+            update_wrong_status(int(qid), "mastered")
+            st.rerun()
+        if b3.button("重开", key=f"wb_open_{qid}"):
+            update_wrong_status(int(qid), "open")
+            st.rerun()
+        star_label = "取消重点" if int(qid) in starred_ids else "标为重点"
+        if b4.button(star_label, key=f"wb_star_{qid}"):
+            set_question_starred(int(qid), int(qid) not in starred_ids, note=note_val)
+            st.rerun()
+
+        if st.checkbox("需要 AI 解析", key=f"wb_ai_toggle_{qid}"):
+            detail = {
+                "question_id": int(qid),
+                "user_answer": row.get("last_user_answer") or "",
+                "analysis": row.get("analysis") or "",
+            }
+            has_bank = bool((row.get("analysis") or "").strip())
+            render_on_demand_ai(
+                detail, button_prefix=f"wb_{qid}", force_visible=not has_bank
+            )
 
 def render_plan_and_chat() -> None:
     st.subheader("学习规划与对话辅导")
@@ -1922,7 +1985,7 @@ def render_xingce_module() -> None:
 def main() -> None:
     st.set_page_config(page_title="考公助手（自用版）", layout="wide")
     st.title("考公助手（自用版）")
-    st.caption("整卷浏览 · 页眉常驻计时 · 草稿自动保存 · 重点题 · 错题目录分页")
+    st.caption("整卷浏览 · 顶部迷你计时 · 草稿自动保存 · 错题右侧二级目录")
 
     init_session()
     ensure_user_db()
