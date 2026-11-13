@@ -1136,10 +1136,102 @@ def start_quiz(
 
 
 # ---------------------------------------------------------------------------
-# UI: 计时（自动刷新）
+# UI: 筛选 / 计时 / 做题
 # ---------------------------------------------------------------------------
 
-@st.fragment(run_every=1)
+def render_practice_filters() -> None:
+    opts = load_filter_options()
+    st.sidebar.subheader("练习模式筛选")
+    regions = list(opts["regions"])
+    preferred = [r for r in FOCUS_REGIONS if r in regions]
+    others = [r for r in regions if r not in FOCUS_REGIONS]
+    region_choices = ["(不限)"] + preferred + others
+
+    year = st.sidebar.selectbox("年份", ["(不限)"] + opts["years"], index=0, key="p_year")
+    region = st.sidebar.selectbox("省份/地区", region_choices, index=0, key="p_region")
+    module = st.sidebar.selectbox(
+        "科目/模块", ["(不限)"] + opts["modules"], index=0, key="p_module"
+    )
+    category = st.sidebar.selectbox(
+        "题型", ["(不限)"] + opts["categories"], index=0, key="p_category"
+    )
+    limit = st.sidebar.number_input(
+        "题目数量", min_value=1, max_value=50, value=DEFAULT_LIMIT, step=1, key="p_limit"
+    )
+    prefer_no_image = st.sidebar.checkbox("优先无图题（推荐）", value=True, key="p_img")
+
+    if st.sidebar.button("开始练习 / 换一组", type="primary", use_container_width=True):
+        qs = fetch_questions(
+            None if year == "(不限)" else year,
+            None if region == "(不限)" else region,
+            None if module == "(不限)" else module,
+            None if category == "(不限)" else category,
+            int(limit),
+            prefer_no_image=prefer_no_image,
+        )
+        if not qs:
+            st.sidebar.error("当前筛选条件下没有题目，请放宽条件。")
+        else:
+            start_quiz(
+                qs,
+                mode="practice",
+                meta={
+                    "year": year,
+                    "region": region,
+                    "module": module,
+                    "category": category,
+                    "limit": int(limit),
+                },
+            )
+            st.rerun()
+
+
+def render_exam_filters() -> None:
+    st.sidebar.subheader("套卷模拟（真题卷）")
+    focus_only = st.sidebar.checkbox(
+        "只看国考 + 河南省考（推荐）", value=True, key="exam_focus"
+    )
+    papers = list_xingce_papers(focus_only=focus_only)
+    if not papers:
+        st.sidebar.warning("未找到可用套卷。")
+        return
+    labels = [
+        f"[{p['region']}] {p['year']} · {p['paper']}（{p['n']}题）" for p in papers
+    ]
+    idx = st.sidebar.selectbox(
+        "选择试卷",
+        options=list(range(len(labels))),
+        format_func=lambda i: labels[i],
+        key="exam_paper_idx",
+    )
+    minutes = st.sidebar.number_input(
+        "参考时长（分钟，不强制交卷）",
+        min_value=30,
+        max_value=240,
+        value=DEFAULT_EXAM_MINUTES,
+        step=5,
+        key="exam_minutes",
+    )
+    if st.sidebar.button("进入套卷模拟", type="primary", use_container_width=True):
+        p = papers[int(idx)]
+        qs = fetch_paper_questions(p["paper"], p["region"], p["year"])
+        if not qs:
+            st.sidebar.error("该套卷没有可做题目。")
+        else:
+            start_quiz(
+                qs,
+                mode="exam",
+                meta={
+                    "paper": p["paper"],
+                    "region": p["region"],
+                    "year": p["year"],
+                    "count": len(qs),
+                },
+                timed_limit_sec=int(minutes) * 60,
+            )
+            st.rerun()
+
+
 def category_time_stats(questions: list[dict[str, Any]]) -> list[tuple[str, int, float]]:
     spent = st.session_state.time_spent or {}
     bucket: dict[str, list[int]] = {}
